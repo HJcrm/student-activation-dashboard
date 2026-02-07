@@ -340,17 +340,22 @@ function renderAll(){{
 
   const barColor=`rgba(${{parseInt(ac.slice(1,3),16)}},${{parseInt(ac.slice(3,5),16)}},${{parseInt(ac.slice(5,7),16)}},0.6)`;
 
-  // Build customdata: [total, active, rate, new, extra]
-  const cd=F.map(d=>[d[tk],d[ak],d.activation_rate,d[nk]||0,
-    MODE==='student'?(d.n_academies||0):(d.total_registered_students||0),
-    dayName(d.day_of_week)]);
+  // Build customdata: [total, active, rate, new, extra, dayname, detail]
+  const detailLabel=MODE==='student'?'소속 학원':'활성 학원 명단';
+  const cd=F.map(d=>{{
+    const rawDetail=MODE==='student'?(d.active_academies||''):(d.active_names||'');
+    const detail=rawDetail?`<br>──────<br><b>${{detailLabel}}:</b><br>${{rawDetail}}`:'';
+    return [d[tk],d[ak],d.activation_rate,d[nk]||0,
+      MODE==='student'?(d.n_academies||0):(d.total_registered_students||0),
+      dayName(d.day_of_week),detail];
+  }});
   const extraLabel=MODE==='student'?'학원 수':'등록 학생';
   const unit=MODE==='student'?'명':'개';
 
-  const ht_active=`<b>%{{x}} (%{{customdata[5]}})</b><br>총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br><b>활성 ${{e}}: %{{y:,}}${{unit}}</b><br>활성화율: %{{customdata[2]:.2f}}%<br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<br>${{extraLabel}}: %{{customdata[4]:,}}<extra></extra>`;
-  const ht_rate=`<b>%{{x}} (%{{customdata[5]}})</b><br>총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br>활성 ${{e}}: %{{customdata[1]:,}}${{unit}}<br><b>활성화율: %{{y:.2f}}%</b><br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<extra></extra>`;
-  const ht_total=`<b>%{{x}} (%{{customdata[5]}})</b><br><b>총 ${{e}}: %{{y:,}}${{unit}}</b><br>활성 ${{e}}: %{{customdata[1]:,}}${{unit}}<br>활성화율: %{{customdata[2]:.2f}}%<br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<br>${{extraLabel}}: %{{customdata[4]:,}}<extra></extra>`;
-  const ht_new=`<b>%{{x}} (%{{customdata[5]}})</b><br>총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br>활성 ${{e}}: %{{customdata[1]:,}}${{unit}}<br><b>신규 ${{e}}: %{{y:,}}${{unit}}</b><extra></extra>`;
+  const ht_active=`<b>%{{x}} (%{{customdata[5]}})</b><br>총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br><b>활성 ${{e}}: %{{y:,}}${{unit}}</b><br>활성화율: %{{customdata[2]:.2f}}%<br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<br>${{extraLabel}}: %{{customdata[4]:,}}%{{customdata[6]}}<extra></extra>`;
+  const ht_rate=`<b>%{{x}} (%{{customdata[5]}})</b><br>총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br>활성 ${{e}}: %{{customdata[1]:,}}${{unit}}<br><b>활성화율: %{{y:.2f}}%</b><br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}%{{customdata[6]}}<extra></extra>`;
+  const ht_total=`<b>%{{x}} (%{{customdata[5]}})</b><br><b>총 ${{e}}: %{{y:,}}${{unit}}</b><br>활성 ${{e}}: %{{customdata[1]:,}}${{unit}}<br>활성화율: %{{customdata[2]:.2f}}%<br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<br>${{extraLabel}}: %{{customdata[4]:,}}%{{customdata[6]}}<extra></extra>`;
+  const ht_new=`<b>%{{x}} (%{{customdata[5]}})</b><br>총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br>활성 ${{e}}: %{{customdata[1]:,}}${{unit}}<br><b>신규 ${{e}}: %{{y:,}}${{unit}}</b>%{{customdata[6]}}<extra></extra>`;
   const ht_ma='<b>7일 이동평균: %{{y}}</b><extra></extra>';
 
   const hoverL={{...L,hovermode:'closest'}};
