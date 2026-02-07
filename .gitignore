@@ -1,0 +1,7 @@
+data/
+__pycache__/
+*.pyc
+nul
+dec22_analysis.json
+dashboard_data.json
+dashboard_data_v2.json
