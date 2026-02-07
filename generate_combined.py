@@ -338,35 +338,50 @@ function renderAll(){{
   document.getElementById('hFT').textContent=`기능별 일별 활성 ${{e}} 수`;
   document.getElementById('hFB').textContent=`기간 내 기능별 평균 활성 ${{e}}`;
 
-  const barC=ac.replace(')',',0.6)').replace('rgb','rgba').replace('#','');
   const barColor=`rgba(${{parseInt(ac.slice(1,3),16)}},${{parseInt(ac.slice(3,5),16)}},${{parseInt(ac.slice(5,7),16)}},0.6)`;
+
+  // Build customdata: [total, active, rate, new, extra]
+  const cd=F.map(d=>[d[tk],d[ak],d.activation_rate,d[nk]||0,
+    MODE==='student'?(d.n_academies||0):(d.total_registered_students||0),
+    dayName(d.day_of_week)]);
+  const extraLabel=MODE==='student'?'학원 수':'등록 학생';
+  const unit=MODE==='student'?'명':'개';
+
+  const ht_active=`<b>%{{x}} (%{{customdata[5]}})</b><br>총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br><b>활성 ${{e}}: %{{y:,}}${{unit}}</b><br>활성화율: %{{customdata[2]:.2f}}%<br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<br>${{extraLabel}}: %{{customdata[4]:,}}<extra></extra>`;
+  const ht_rate=`<b>%{{x}} (%{{customdata[5]}})</b><br>총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br>활성 ${{e}}: %{{customdata[1]:,}}${{unit}}<br><b>활성화율: %{{y:.2f}}%</b><br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<extra></extra>`;
+  const ht_total=`<b>%{{x}} (%{{customdata[5]}})</b><br><b>총 ${{e}}: %{{y:,}}${{unit}}</b><br>활성 ${{e}}: %{{customdata[1]:,}}${{unit}}<br>활성화율: %{{customdata[2]:.2f}}%<br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<br>${{extraLabel}}: %{{customdata[4]:,}}<extra></extra>`;
+  const ht_new=`<b>%{{x}} (%{{customdata[5]}})</b><br>총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br>활성 ${{e}}: %{{customdata[1]:,}}${{unit}}<br><b>신규 ${{e}}: %{{y:,}}${{unit}}</b><extra></extra>`;
+  const ht_ma='<b>7일 이동평균: %{{y}}</b><extra></extra>';
+
+  const hoverL={{...L,hovermode:'closest'}};
 
   // DAILY
   Plotly.react('d-active',[
-    {{x:dates,y:actV,name:`활성 ${{e}}`,type:'bar',marker:{{color:barColor}}}},
-    {{x:dates,y:ma(actV),name:'7일 이동평균',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:2.5}}}},
-  ],{{...L}},CFG);
+    {{x:dates,y:actV,customdata:cd,name:`활성 ${{e}}`,type:'bar',marker:{{color:barColor}},hovertemplate:ht_active}},
+    {{x:dates,y:ma(actV),name:'7일 이동평균',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:2.5}},hovertemplate:ht_ma}},
+  ],{{...hoverL}},CFG);
   Plotly.react('d-rate',[
-    {{x:dates,y:actR,name:'활성화율',type:'bar',marker:{{color:'rgba(74,222,128,0.5)'}}}},
-    {{x:dates,y:ma(actR),name:'7일 이동평균',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:2.5}}}},
-  ],{{...L,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
+    {{x:dates,y:actR,customdata:cd,name:'활성화율',type:'bar',marker:{{color:'rgba(74,222,128,0.5)'}},hovertemplate:ht_rate}},
+    {{x:dates,y:ma(actR),name:'7일 이동평균',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:2.5}},hovertemplate:ht_ma}},
+  ],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
   Plotly.react('d-total',[
-    {{x:dates,y:totV,name:`총 ${{e}}`,type:'scatter',mode:'lines',line:{{color:ac,width:2}},fill:'tozeroy',fillcolor:barColor.replace('0.6','0.1')}},
-  ],{{...L}},CFG);
+    {{x:dates,y:totV,customdata:cd,name:`총 ${{e}}`,type:'scatter',mode:'lines',line:{{color:ac,width:2}},fill:'tozeroy',fillcolor:barColor.replace('0.6','0.1'),hovertemplate:ht_total}},
+  ],{{...hoverL}},CFG);
   Plotly.react('d-new',[
-    {{x:dates,y:newV,name:`신규 ${{e}}`,type:'bar',marker:{{color:'#818cf8'}}}},
-  ],{{...L}},CFG);
+    {{x:dates,y:newV,customdata:cd,name:`신규 ${{e}}`,type:'bar',marker:{{color:'#818cf8'}},hovertemplate:ht_new}},
+  ],{{...hoverL}},CFG);
 
   // Extra daily card
   const eCard=document.getElementById('extraDailyCard');
+  const ht_extra=`<b>%{{x}} (%{{customdata[5]}})</b><br>총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br>활성 ${{e}}: %{{customdata[1]:,}}${{unit}}<br><b>${{extraLabel}}: %{{y:,}}</b><extra></extra>`;
   if(MODE==='student'){{
     eCard.classList.remove('hidden');
     document.getElementById('hDE').textContent='일별 학원 수';
-    Plotly.react('d-extra',[{{x:dates,y:F.map(d=>d.n_academies||0),name:'학원 수',type:'scatter',mode:'lines',line:{{color:'#f472b6',width:2}},fill:'tozeroy',fillcolor:'rgba(244,114,182,0.08)'}}],{{...L}},CFG);
+    Plotly.react('d-extra',[{{x:dates,y:F.map(d=>d.n_academies||0),customdata:cd,name:'학원 수',type:'scatter',mode:'lines',line:{{color:'#f472b6',width:2}},fill:'tozeroy',fillcolor:'rgba(244,114,182,0.08)',hovertemplate:ht_extra}}],{{...hoverL}},CFG);
   }}else{{
     eCard.classList.remove('hidden');
     document.getElementById('hDE').textContent='등록 학생 수 추이';
-    Plotly.react('d-extra',[{{x:dates,y:F.map(d=>d.total_registered_students||0),name:'등록 학생',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:2}},fill:'tozeroy',fillcolor:'rgba(96,165,250,0.1)'}}],{{...L}},CFG);
+    Plotly.react('d-extra',[{{x:dates,y:F.map(d=>d.total_registered_students||0),customdata:cd,name:'등록 학생',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:2}},fill:'tozeroy',fillcolor:'rgba(96,165,250,0.1)',hovertemplate:ht_extra}}],{{...hoverL}},CFG);
   }}
 
   // WEEKLY
@@ -376,10 +391,15 @@ function renderAll(){{
   const wR=wK.map(k=>{{const g=wG[k];return +(g.reduce((a,d)=>a+d.activation_rate,0)/g.length).toFixed(2)}});
   const wM=wK.map(k=>Math.max(...wG[k].map(d=>d[ak])));
   const wN=wK.map(k=>wG[k].reduce((a,d)=>a+(d[nk]||0),0));
-  Plotly.react('w-active',[{{x:wLb,y:wA,name:'평균 활성',type:'bar',marker:{{color:ac}}}}],{{...L,xaxis:{{...L.xaxis,tickangle:-45}}}},CFG);
-  Plotly.react('w-rate',[{{x:wLb,y:wR,name:'평균 활성화율',type:'scatter',mode:'lines+markers',line:{{color:'#4ade80',width:2}},marker:{{size:4}}}}],{{...L,xaxis:{{...L.xaxis,tickangle:-45}},yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
-  Plotly.react('w-max',[{{x:wLb,y:wM,name:'최대 활성',type:'bar',marker:{{color:'#f59e0b'}}}}],{{...L,xaxis:{{...L.xaxis,tickangle:-45}}}},CFG);
-  Plotly.react('w-new',[{{x:wLb,y:wN,name:`신규 ${{e}}`,type:'bar',marker:{{color:'#818cf8'}}}}],{{...L,xaxis:{{...L.xaxis,tickangle:-45}}}},CFG);
+  const wT=wK.map(k=>Math.round(wG[k].reduce((a,d)=>a+d[tk],0)/wG[k].length));
+  const wDays=wK.map(k=>wG[k].length);
+  const wCd=wK.map((_,i)=>[wT[i],wA[i],wR[i],wN[i],wM[i],wDays[i]]);
+  const wHt=`<b>%{{x}}</b> (%{{customdata[5]}}일)<br>평균 총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br><b>평균 활성: %{{y}}${{unit}}</b><br>평균 활성화율: %{{customdata[2]}}%<br>최대 활성: %{{customdata[4]:,}}${{unit}}<br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<extra></extra>`;
+
+  Plotly.react('w-active',[{{x:wLb,y:wA,customdata:wCd,name:'평균 활성',type:'bar',marker:{{color:ac}},hovertemplate:wHt}}],{{...hoverL,xaxis:{{...L.xaxis,tickangle:-45}}}},CFG);
+  Plotly.react('w-rate',[{{x:wLb,y:wR,customdata:wCd,name:'평균 활성화율',type:'scatter',mode:'lines+markers',line:{{color:'#4ade80',width:2}},marker:{{size:4}},hovertemplate:`<b>%{{x}}</b> (%{{customdata[5]}}일)<br>평균 총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br>평균 활성: %{{customdata[1]}}${{unit}}<br><b>평균 활성화율: %{{y}}%</b><br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<extra></extra>`}}],{{...hoverL,xaxis:{{...L.xaxis,tickangle:-45}},yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
+  Plotly.react('w-max',[{{x:wLb,y:wM,customdata:wCd,name:'최대 활성',type:'bar',marker:{{color:'#f59e0b'}},hovertemplate:`<b>%{{x}}</b> (%{{customdata[5]}}일)<br>평균 총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br><b>최대 활성: %{{y:,}}${{unit}}</b><br>평균 활성: %{{customdata[1]}}${{unit}}<extra></extra>`}}],{{...hoverL,xaxis:{{...L.xaxis,tickangle:-45}}}},CFG);
+  Plotly.react('w-new',[{{x:wLb,y:wN,customdata:wCd,name:`신규 ${{e}}`,type:'bar',marker:{{color:'#818cf8'}},hovertemplate:`<b>%{{x}}</b> (%{{customdata[5]}}일)<br>평균 총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br><b>신규 ${{e}}: %{{y:,}}${{unit}}</b><extra></extra>`}}],{{...hoverL,xaxis:{{...L.xaxis,tickangle:-45}}}},CFG);
 
   // MONTHLY
   const mG=groupBy(F,d=>isoMonth(d.date)),mK=Object.keys(mG).sort();
@@ -388,15 +408,19 @@ function renderAll(){{
   const mM=mK.map(k=>Math.max(...mG[k].map(d=>d[ak])));
   const mN=mK.map(k=>mG[k].reduce((a,d)=>a+(d[nk]||0),0));
   const mT=mK.map(k=>Math.round(mG[k].reduce((a,d)=>a+d[tk],0)/mG[k].length));
-  Plotly.react('m-active',[{{x:mK,y:mA,name:'평균 활성',type:'bar',marker:{{color:ac}},text:mA.map(v=>v.toFixed(1)),textposition:'outside',textfont:{{color:'#94a3b8',size:11}}}}],{{...L}},CFG);
-  Plotly.react('m-rate',[{{x:mK,y:mR,name:'평균 활성화율',type:'scatter',mode:'lines+markers',line:{{color:'#4ade80',width:3}},marker:{{size:7}}}}],{{...L,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
-  Plotly.react('m-max',[{{x:mK,y:mM,name:'최대 활성',type:'bar',marker:{{color:'#f59e0b'}},text:mM,textposition:'outside',textfont:{{color:'#94a3b8',size:11}}}}],{{...L}},CFG);
-  Plotly.react('m-new',[{{x:mK,y:mN,name:`신규 ${{e}}`,type:'bar',marker:{{color:'#818cf8'}},text:mN,textposition:'outside',textfont:{{color:'#94a3b8',size:11}}}}],{{...L}},CFG);
-  Plotly.react('m-total',[{{x:mK,y:mT,name:`평균 총 ${{e}}`,type:'bar',marker:{{color:ac}},text:mT.map(v=>v.toLocaleString()),textposition:'outside',textfont:{{color:'#94a3b8',size:11}}}}],{{...L}},CFG);
+  const mDays=mK.map(k=>mG[k].length);
+  const mCd=mK.map((_,i)=>[mT[i],mA[i],mR[i],mN[i],mM[i],mDays[i]]);
+  const mHt=`<b>%{{x}}</b> (%{{customdata[5]}}일)<br>평균 총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br><b>평균 활성: %{{y}}${{unit}}</b><br>평균 활성화율: %{{customdata[2]}}%<br>최대 활성: %{{customdata[4]:,}}${{unit}}<br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<extra></extra>`;
+
+  Plotly.react('m-active',[{{x:mK,y:mA,customdata:mCd,name:'평균 활성',type:'bar',marker:{{color:ac}},text:mA.map(v=>v.toFixed(1)),textposition:'outside',textfont:{{color:'#94a3b8',size:11}},hovertemplate:mHt}}],{{...hoverL}},CFG);
+  Plotly.react('m-rate',[{{x:mK,y:mR,customdata:mCd,name:'평균 활성화율',type:'scatter',mode:'lines+markers',line:{{color:'#4ade80',width:3}},marker:{{size:7}},hovertemplate:`<b>%{{x}}</b> (%{{customdata[5]}}일)<br>평균 총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br>평균 활성: %{{customdata[1]}}${{unit}}<br><b>평균 활성화율: %{{y}}%</b><br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<extra></extra>`}}],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
+  Plotly.react('m-max',[{{x:mK,y:mM,customdata:mCd,name:'최대 활성',type:'bar',marker:{{color:'#f59e0b'}},text:mM,textposition:'outside',textfont:{{color:'#94a3b8',size:11}},hovertemplate:`<b>%{{x}}</b> (%{{customdata[5]}}일)<br><b>최대 활성: %{{y:,}}${{unit}}</b><br>평균 활성: %{{customdata[1]}}${{unit}}<br>평균 활성화율: %{{customdata[2]}}%<extra></extra>`}}],{{...hoverL}},CFG);
+  Plotly.react('m-new',[{{x:mK,y:mN,customdata:mCd,name:`신규 ${{e}}`,type:'bar',marker:{{color:'#818cf8'}},text:mN,textposition:'outside',textfont:{{color:'#94a3b8',size:11}},hovertemplate:`<b>%{{x}}</b> (%{{customdata[5]}}일)<br>평균 총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br><b>신규 ${{e}}: %{{y:,}}${{unit}}</b><extra></extra>`}}],{{...hoverL}},CFG);
+  Plotly.react('m-total',[{{x:mK,y:mT,customdata:mCd,name:`평균 총 ${{e}}`,type:'bar',marker:{{color:ac}},text:mT.map(v=>v.toLocaleString()),textposition:'outside',textfont:{{color:'#94a3b8',size:11}},hovertemplate:`<b>%{{x}}</b> (%{{customdata[5]}}일)<br><b>평균 총 ${{e}}: %{{y:,}}${{unit}}</b><br>평균 활성: %{{customdata[1]}}${{unit}}<br>활성화율: %{{customdata[2]}}%<extra></extra>`}}],{{...hoverL}},CFG);
 
   // FEATURES
   const fc=featCols(),fn=featNames(),fcl=fColors();
-  const fT=fc.map((k,i)=>({{x:dates,y:F.map(d=>d[k]||0),name:fn[k]||k,type:'scatter',mode:'lines',line:{{color:fcl[i%fcl.length],width:2}}}}));
+  const fT=fc.map((k,i)=>({{x:dates,y:F.map(d=>d[k]||0),customdata:cd,name:fn[k]||k,type:'scatter',mode:'lines',line:{{color:fcl[i%fcl.length],width:2}},hovertemplate:`<b>%{{x}}</b><br>${{fn[k]||k}}: <b>%{{y:,}}${{unit}}</b><br>총 ${{e}}: %{{customdata[0]:,}}<br>전체 활성: %{{customdata[1]:,}}<extra></extra>`}}));
   Plotly.react('f-trend',fT,{{...L,margin:{{...L.margin,b:60}}}},CFG);
   const fAvg=fc.map(k=>{{const v=F.map(d=>d[k]||0);return +(v.reduce((a,b)=>a+b,0)/v.length).toFixed(1)}});
   const fLb=fc.map(k=>fn[k]||k);
