@@ -1,0 +1,68 @@
+name: Daily Dashboard Update
+
+on:
+  schedule:
+    # 매일 한국시간 오전 10시 (UTC 01:00) 실행
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    # 수동 실행도 가능
+
+permissions:
+  contents: write
+
+jobs:
+  update-dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore data cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            학생 관련 데이터/data
+            학원 관련 데이터/data
+          key: csv-data-${{ github.run_number }}
+          restore-keys: |
+            csv-data-
+
+      - name: Download student data
+        run: python "학생 관련 데이터/download_all.py"
+
+      - name: Download institution data
+        run: python "학원 관련 데이터/download_all.py"
+
+      - name: Build student dashboard data
+        run: python "학생 관련 데이터/build_dashboard_v2.py"
+
+      - name: Build institution dashboard data
+        run: python "학원 관련 데이터/build_dashboard.py"
+
+      - name: Generate combined dashboard
+        run: python generate_combined.py
+
+      - name: Copy to index.html
+        run: cp 학쫑_통합_대시보드.html index.html
+
+      - name: Check for changes
+        id: changes
+        run: |
+          git diff --quiet index.html && echo "changed=false" >> $GITHUB_OUTPUT || echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: Commit and push
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Auto-update dashboard $(date -u +%Y-%m-%d)"
+          git push
