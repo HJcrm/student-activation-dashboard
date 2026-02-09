@@ -82,6 +82,16 @@ for f in files:
     except Exception as e:
         skipped.append(f"{date_str}: {e}")
 
+# Load registered academy codes
+_REG_CSV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "가입학원_목록.csv")
+REG_CODES = set()
+if os.path.exists(_REG_CSV):
+    _rdf = pd.read_csv(_REG_CSV, encoding='utf-8-sig')
+    REG_CODES = set(_rdf.iloc[:, 2].astype(str).str.strip().tolist())
+    print(f"Registered academy codes loaded: {len(REG_CODES)}")
+else:
+    print("Warning: registered academy list not found")
+
 sorted_dates = sorted(daily_frames.keys())
 print(f"Valid days: {len(sorted_dates)}")
 print(f"Skipped: {len(skipped)}")
@@ -121,7 +131,15 @@ for date in sorted_dates:
     # Active students: compare with previous day
     active_students = 0
     active_by_feature = {uc: 0 for uc in usage_cols}
+    reg_by_feature = {uc: 0 for uc in usage_cols}
     active_student_codes = []
+
+    # Registration mask for today's students
+    acad_code = info['academy_code_col']
+    if acad_code and acad_code in df_today.columns:
+        reg_mask = df_today[acad_code].astype(str).isin(REG_CODES)
+    else:
+        reg_mask = pd.Series(False, index=df_today.index)
 
     if prev_date is not None:
         df_prev = daily_frames[prev_date]['df']
@@ -129,7 +147,6 @@ for date in sorted_dates:
 
         # Common students
         common_students = df_today.index.intersection(df_prev.index)
-        # Common usage columns
         common_usage = [c for c in usage_cols if c in prev_usage_cols and c in df_prev.columns]
 
         if len(common_students) > 0 and len(common_usage) > 0:
@@ -137,46 +154,69 @@ for date in sorted_dates:
             prev_vals = df_prev.loc[common_students, common_usage]
             delta = today_vals - prev_vals
 
-            # A student is active if any usage column increased
             active_mask = (delta > 0).any(axis=1)
             active_students = int(active_mask.sum())
             active_student_codes.extend(common_students[active_mask].tolist())
 
-            # Per-feature active counts
+            reg_cm = reg_mask.reindex(common_students, fill_value=False)
             for uc in common_usage:
-                active_by_feature[uc] = int((delta[uc] > 0).sum())
+                fa = delta[uc] > 0
+                active_by_feature[uc] = int(fa.sum())
+                reg_by_feature[uc] = int((fa & reg_cm).sum())
 
-        # New students (not in previous day) who have any usage > 0
+        # New students
         new_student_ids = df_today.index.difference(df_prev.index)
         if len(new_student_ids) > 0:
             new_df = df_today.loc[new_student_ids, [c for c in usage_cols if c in df_today.columns]]
             new_active_mask = (new_df > 0).any(axis=1)
             active_students += int(new_active_mask.sum())
             active_student_codes.extend(new_student_ids[new_active_mask].tolist())
+            new_reg_m = reg_mask.reindex(new_student_ids, fill_value=False)
             for uc in usage_cols:
                 if uc in new_df.columns:
-                    active_by_feature[uc] += int((new_df[uc] > 0).sum())
+                    fa = new_df[uc] > 0
+                    active_by_feature[uc] += int(fa.sum())
+                    reg_by_feature[uc] += int((fa & new_reg_m).sum())
 
-    # Build active students' academy summary
+    # Academy summary helper
     acad_col = info['academy_col']
-    active_academies_str = ''
-    if acad_col and acad_col in df_today.columns and len(active_student_codes) > 0:
-        valid_codes = [c for c in active_student_codes if c in df_today.index]
-        if valid_codes:
-            acad_names = df_today.loc[valid_codes, acad_col].dropna()
-            acad_counts = acad_names.value_counts().sort_values(ascending=False)
-            top = acad_counts.head(10)
-            parts = [f'{name} ({cnt}명)' for name, cnt in top.items()]
-            active_academies_str = '<br>'.join(parts)
-            remainder = len(acad_counts) - 10
-            if remainder > 0:
-                active_academies_str += f'<br>외 {remainder}개 학원'
+    def _acad_str(codes):
+        if not acad_col or acad_col not in df_today.columns or not codes: return ''
+        vc = [c for c in codes if c in df_today.index]
+        if not vc: return ''
+        an = df_today.loc[vc, acad_col].dropna()
+        ac = an.value_counts().sort_values(ascending=False)
+        parts = [f'{n} ({c}명)' for n, c in ac.head(10).items()]
+        s = '<br>'.join(parts)
+        if len(ac) > 10: s += f'<br>외 {len(ac)-10}개 학원'
+        return s
+
+    # Split active students by registration
+    rac = [c for c in active_student_codes if c in reg_mask.index and reg_mask.get(c, False)]
+    uac = [c for c in active_student_codes if c not in rac]
+
+    # Registration breakdown totals
+    rt = int(reg_mask.sum()); ut = total_students - rt
+    ra = len(rac); ua = len(uac)
+    rr = round(ra / rt * 100, 2) if rt > 0 else 0
+    ur = round(ua / ut * 100, 2) if ut > 0 else 0
+
+    # Academies per group
+    r_nacad = 0; u_nacad = 0
+    _acol = acad_code or acad_col
+    if _acol and _acol in df_today.columns:
+        r_nacad = int(df_today.loc[reg_mask, _acol].nunique())
+        u_nacad = int(df_today.loc[~reg_mask, _acol].nunique())
 
     # New students count
-    new_students = 0
+    new_students = 0; reg_new = 0; unreg_new = 0
     if prev_date is not None:
         df_prev = daily_frames[prev_date]['df']
-        new_students = len(df_today.index.difference(df_prev.index))
+        _ni = df_today.index.difference(df_prev.index)
+        new_students = len(_ni)
+        if len(_ni) > 0:
+            reg_new = int(reg_mask.reindex(_ni, fill_value=False).sum())
+            unreg_new = new_students - reg_new
 
     row = {
         'date': date,
@@ -185,9 +225,15 @@ for date in sorted_dates:
         'activation_rate': round(active_students / total_students * 100, 2) if total_students > 0 else 0,
         'n_academies': n_academies,
         'new_students': new_students,
-        'active_academies': active_academies_str,
+        'active_academies': _acad_str(active_student_codes),
+        'reg_total': rt, 'reg_active': ra, 'reg_rate': rr, 'reg_new': reg_new,
+        'reg_n_academies': r_nacad, 'reg_active_academies': _acad_str(rac),
+        'unreg_total': ut, 'unreg_active': ua, 'unreg_rate': ur, 'unreg_new': unreg_new,
+        'unreg_n_academies': u_nacad, 'unreg_active_academies': _acad_str(uac),
         **grade_dist,
         **active_by_feature,
+        **{f'reg_{k}': v for k, v in reg_by_feature.items()},
+        **{f'unreg_{k}': active_by_feature.get(k, 0) - reg_by_feature.get(k, 0) for k in active_by_feature},
         **cat_dist,
     }
     results.append(row)
@@ -206,7 +252,7 @@ daily_df['year_month'] = daily_df['date'].dt.to_period('M').astype(str)
 daily_df['year_week'] = daily_df['date'].dt.strftime('%Y-W%W')
 
 # Identify feature columns (usage-based)
-feature_cols = [c for c in daily_df.columns if any(k in c for k in USAGE_COLS_KEYWORDS) and c not in ['total_students','active_students','new_students','n_academies']]
+feature_cols = [c for c in daily_df.columns if any(k in c for k in USAGE_COLS_KEYWORDS) and c not in ['total_students','active_students','new_students','n_academies'] and not c.startswith('reg_') and not c.startswith('unreg_')]
 cat_cols = [c for c in daily_df.columns if c.startswith('cat_')]
 
 print(f"\nClean daily data: {len(daily_df)} days")
@@ -259,10 +305,14 @@ def safe_val(v):
         return 0
     return v
 
+reg_extra = ['reg_total','reg_active','reg_rate','reg_new','reg_n_academies','reg_active_academies',
+             'unreg_total','unreg_active','unreg_rate','unreg_new','unreg_n_academies','unreg_active_academies']
+reg_feat = [f'reg_{c}' for c in feature_cols] + [f'unreg_{c}' for c in feature_cols]
 daily_export_cols = ['date','total_students','active_students','activation_rate',
                      'n_academies','new_students','active_academies','day_of_week','year_month','year_week'] \
                     + feature_cols + cat_cols \
-                    + [c for c in ['grade_0','grade_1','grade_2','grade_3'] if c in daily_df.columns]
+                    + [c for c in ['grade_0','grade_1','grade_2','grade_3'] if c in daily_df.columns] \
+                    + reg_extra + reg_feat
 
 daily_chart = daily_df[[c for c in daily_export_cols if c in daily_df.columns]].copy()
 daily_chart['date'] = daily_chart['date'].dt.strftime('%Y-%m-%d')

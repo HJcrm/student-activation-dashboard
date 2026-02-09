@@ -68,6 +68,12 @@ html = f"""<!DOCTYPE html>
   .switch input:checked+.slider::before{{transform:translateX(16px)}}
   .outlier-info{{font-size:11px;color:#f87171;margin-left:4px}}
 
+  .reg-filter{{display:flex;gap:0;border-radius:10px;overflow:hidden;border:1px solid rgba(71,85,105,0.5);margin-left:12px}}
+  .reg-btn{{padding:7px 14px;background:rgba(15,23,42,0.6);color:#94a3b8;border:none;border-right:1px solid rgba(71,85,105,0.3);cursor:pointer;font-size:12px;font-weight:500;transition:all .2s;font-family:inherit}}
+  .reg-btn:last-child{{border-right:none}}
+  .reg-btn:hover{{background:rgba(51,65,85,0.5);color:#e2e8f0}}
+  .reg-btn.active{{background:rgba(59,130,246,0.25);color:#60a5fa;font-weight:600}}
+
   .kpi-row{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}}
   .kpi{{background:linear-gradient(145deg,rgba(30,41,59,0.95),rgba(30,41,59,0.6));border-radius:14px;padding:20px;border:1px solid rgba(51,65,85,0.5);transition:all .3s ease;position:relative;overflow:hidden}}
   .kpi::before{{content:'';position:absolute;top:0;left:0;right:0;height:3px;border-radius:14px 14px 0 0}}
@@ -149,6 +155,11 @@ html = f"""<!DOCTYPE html>
     <button class="preset-btn" onclick="setRange(180)">최근 6개월</button>
     <button class="preset-btn active" onclick="setRange(0)">전체</button>
     <span class="range-info" id="rangeInfo"></span>
+    <div class="reg-filter">
+      <button class="reg-btn active" onclick="setRegFilter('all',this)">전체</button>
+      <button class="reg-btn" onclick="setRegFilter('reg',this)">가입학원만</button>
+      <button class="reg-btn" onclick="setRegFilter('unreg',this)">비가입학원만</button>
+    </div>
     <div class="outlier-toggle">
       <label class="switch"><input type="checkbox" id="outlierToggle" onchange="renderAll()"><span class="slider"></span></label>
       <label for="outlierToggle">이상치 제외</label>
@@ -243,12 +254,36 @@ const I_FNAMES={json.dumps({
 }, ensure_ascii=False)};
 
 let MODE='student'; // 'student' | 'inst'
+let REG_FILTER='all'; // 'all' | 'reg' | 'unreg'
 
 const SCOL=['#60a5fa','#4ade80','#f59e0b','#e879f9','#818cf8'];
 const ICOL=['#a78bfa','#60a5fa','#4ade80','#f59e0b','#f472b6','#818cf8','#fb923c','#22d3ee','#e879f9','#facc15','#34d399','#f87171','#38bdf8'];
 
 function accent(){{return MODE==='student'?'#3b82f6':'#8b5cf6'}}
-function raw(){{return MODE==='student'?S_RAW:I_RAW}}
+function raw(){{
+  const data=MODE==='student'?S_RAW:I_RAW;
+  if(REG_FILTER==='all') return data;
+  const p=REG_FILTER==='reg'?'reg_':'unreg_';
+  const tk=totalKey(),ak=activeKey(),nk=newKey();
+  return data.map(d=>{{
+    const r={{...d}};
+    r[tk]=d[p+'total']??d[tk];
+    r[ak]=d[p+'active']??d[ak];
+    r.activation_rate=d[p+'rate']??d.activation_rate;
+    r[nk]=d[p+'new']??d[nk];
+    if(MODE==='inst'){{
+      r.total_registered_students=d[p+'students']??d.total_registered_students;
+      r.active_names=d[p+'active_names']??d.active_names;
+      r.storage_users=d[p+'storage']??d.storage_users;
+      r.purchase_users=d[p+'purchase']??d.purchase_users;
+    }}else{{
+      r.n_academies=d[p+'n_academies']??d.n_academies;
+      r.active_academies=d[p+'active_academies']??d.active_academies;
+    }}
+    featCols().forEach(k=>{{if(d[p+k]!==undefined)r[k]=d[p+k]}});
+    return r;
+  }});
+}}
 function featCols(){{return MODE==='student'?S_FEAT:I_FEAT}}
 function featNames(){{return MODE==='student'?S_FNAMES:I_FNAMES}}
 function fColors(){{return MODE==='student'?SCOL:ICOL}}
@@ -266,9 +301,19 @@ function isoMonth(ds){{return ds.substring(0,7)}}
 function iqrHi(arr){{const s=[...arr].sort((a,b)=>a-b);const q1=s[Math.floor(s.length*.25)],q3=s[Math.floor(s.length*.75)];return q3+1.5*(q3-q1)}}
 function dayName(v){{const m={{'Monday':'월','Tuesday':'화','Wednesday':'수','Thursday':'목','Friday':'금','Saturday':'토','Sunday':'일'}};return m[v]||v}}
 
+// ===== REGISTRATION FILTER =====
+function setRegFilter(f,btn){{
+  REG_FILTER=f;
+  document.querySelectorAll('.reg-btn').forEach(b=>{{b.classList.remove('active')}});
+  if(btn) btn.classList.add('active');
+  renderAll();
+}}
+
 // ===== MODE SWITCH =====
 function switchMode(m){{
   MODE=m;
+  REG_FILTER='all';
+  document.querySelectorAll('.reg-btn').forEach((b,i)=>{{b.classList.toggle('active',i===0)}});
   document.getElementById('modeStudent').className='mode-btn'+(m==='student'?' active-student':'');
   document.getElementById('modeInst').className='mode-btn'+(m==='inst'?' active-inst':'');
   document.getElementById('noteStudent').classList.toggle('hidden',m!=='student');

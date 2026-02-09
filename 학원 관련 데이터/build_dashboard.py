@@ -8,6 +8,16 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 files = sorted(glob.glob(os.path.join(DATA_DIR, "*.csv")))
 print(f"Total CSV files: {len(files)}")
 
+# Load registered academy codes
+_REG_CSV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "가입학원_목록.csv")
+REG_CODES = set()
+if os.path.exists(_REG_CSV):
+    _rdf = pd.read_csv(_REG_CSV, encoding='utf-8-sig')
+    REG_CODES = set(_rdf.iloc[:, 2].astype(str).str.strip().tolist())
+    print(f"Registered academy codes loaded: {len(REG_CODES)}")
+else:
+    print("Warning: registered academy list not found")
+
 # Usage columns (numeric, cumulative) for delta-based active detection
 USAGE_KEYWORDS = ['사용량', '진행량', '검사량', '생성량', '승인량', '거절량', '업로드량', '분석량']
 
@@ -85,6 +95,7 @@ for date in sorted_dates:
     # Active institutions (delta-based)
     active_inst = 0
     active_by_feature = {uc: 0 for uc in usage_cols}
+    reg_by_feature = {uc: 0 for uc in usage_cols}
     active_codes = []
 
     if prev_date is not None:
@@ -98,8 +109,11 @@ for date in sorted_dates:
             active_mask = (delta > 0).any(axis=1)
             active_inst = int(active_mask.sum())
             active_codes.extend(common_ids[active_mask].tolist())
+            reg_common = common_ids.isin(REG_CODES)
             for uc in common_usage:
-                active_by_feature[uc] = int((delta[uc] > 0).sum())
+                fa = delta[uc] > 0
+                active_by_feature[uc] = int(fa.sum())
+                reg_by_feature[uc] = int((fa & reg_common).sum())
 
         # New institutions with usage > 0
         new_ids = df_today.index.difference(df_prev.index)
@@ -110,26 +124,47 @@ for date in sorted_dates:
             new_active = int(new_active_mask.sum())
             active_inst += new_active
             active_codes.extend(new_ids[new_active_mask].tolist())
+            new_reg = new_ids.isin(REG_CODES)
             for uc in new_uc:
-                active_by_feature[uc] += int((new_df[uc] > 0).sum())
+                fa = new_df[uc] > 0
+                active_by_feature[uc] += int(fa.sum())
+                reg_by_feature[uc] += int((fa & new_reg).sum())
 
-    # Build active institution names summary
+    # Active names (all / reg / unreg)
     name_col = next((c for c in cols if '학원명' in c), None)
-    active_names_str = ''
-    if name_col and name_col in df_today.columns and len(active_codes) > 0:
-        valid_codes = [c for c in active_codes if c in df_today.index]
-        if valid_codes:
-            names = df_today.loc[valid_codes, name_col].dropna().tolist()
-            sorted_names = sorted(set(names))
-            top = sorted_names[:10]
-            active_names_str = '<br>'.join(top)
-            if len(sorted_names) > 10:
-                active_names_str += f'<br>외 {len(sorted_names)-10}개'
+    def _names_str(codes):
+        if not name_col or name_col not in df_today.columns or not codes:
+            return ''
+        vc = [c for c in codes if c in df_today.index]
+        if not vc: return ''
+        ns = sorted(set(df_today.loc[vc, name_col].dropna().tolist()))
+        s = '<br>'.join(ns[:10])
+        if len(ns) > 10: s += f'<br>외 {len(ns)-10}개'
+        return s
+
+    rac = [c for c in active_codes if c in REG_CODES]
+    uac = [c for c in active_codes if c not in REG_CODES]
+
+    # Registration breakdown
+    rm = df_today.index.isin(REG_CODES)
+    rt = int(rm.sum()); ut = total_inst - rt
+    ra = len(rac); ua = len(uac)
+    rr = round(ra / rt * 100, 2) if rt > 0 else 0
+    ur = round(ua / ut * 100, 2) if ut > 0 else 0
+    rs = int(pd.to_numeric(df_today.loc[rm, reg_col], errors='coerce').fillna(0).sum()) if reg_col and reg_col in df_today.columns else 0
+    us = total_registered_students - rs
+    rsto = int((df_today.loc[rm, storage_col].astype(str).str.strip().str.upper() == 'Y').sum()) if storage_col and storage_col in df_today.columns else 0
+    usto = storage_yes - rsto
+    rpur = int((df_today.loc[rm, purchase_col].astype(str).str.strip().str.upper() == 'Y').sum()) if purchase_col and purchase_col in df_today.columns else 0
+    upur = purchase_yes - rpur
 
     # New institutions count
-    new_inst = 0
+    new_inst = 0; reg_new = 0; unreg_new = 0
     if prev_date is not None:
-        new_inst = len(df_today.index.difference(daily_frames[prev_date]['df'].index))
+        _ni = df_today.index.difference(daily_frames[prev_date]['df'].index)
+        new_inst = len(_ni)
+        reg_new = int(_ni.isin(REG_CODES).sum())
+        unreg_new = new_inst - reg_new
 
     row = {
         'date': date,
@@ -140,8 +175,16 @@ for date in sorted_dates:
         'total_registered_students': total_registered_students,
         'storage_users': storage_yes,
         'purchase_users': purchase_yes,
-        'active_names': active_names_str,
+        'active_names': _names_str(active_codes),
+        'reg_total': rt, 'reg_active': ra, 'reg_rate': rr, 'reg_new': reg_new,
+        'reg_students': rs, 'reg_storage': rsto, 'reg_purchase': rpur,
+        'reg_active_names': _names_str(rac),
+        'unreg_total': ut, 'unreg_active': ua, 'unreg_rate': ur, 'unreg_new': unreg_new,
+        'unreg_students': us, 'unreg_storage': usto, 'unreg_purchase': upur,
+        'unreg_active_names': _names_str(uac),
         **active_by_feature,
+        **{f'reg_{k}': v for k, v in reg_by_feature.items()},
+        **{f'unreg_{k}': active_by_feature.get(k, 0) - reg_by_feature.get(k, 0) for k in active_by_feature},
     }
     results.append(row)
     prev_date = date
@@ -153,7 +196,7 @@ daily_df['day_of_week'] = daily_df['date'].dt.day_name()
 daily_df['year_month'] = daily_df['date'].dt.to_period('M').astype(str)
 daily_df['year_week'] = daily_df['date'].dt.strftime('%Y-W%W')
 
-feature_cols = [c for c in daily_df.columns if any(k in c for k in USAGE_KEYWORDS)]
+feature_cols = [c for c in daily_df.columns if any(k in c for k in USAGE_KEYWORDS) and not c.startswith('reg_') and not c.startswith('unreg_')]
 
 print(f"\nClean daily data: {len(daily_df)} days")
 print(f"Feature columns: {feature_cols}")
@@ -171,9 +214,12 @@ def safe_val(v):
     if isinstance(v, float) and pd.isna(v): return 0
     return v
 
+reg_extra = ['reg_total','reg_active','reg_rate','reg_new','reg_students','reg_storage','reg_purchase','reg_active_names',
+             'unreg_total','unreg_active','unreg_rate','unreg_new','unreg_students','unreg_storage','unreg_purchase','unreg_active_names']
+reg_feat = [f'reg_{c}' for c in feature_cols] + [f'unreg_{c}' for c in feature_cols]
 export_cols = ['date','total_institutions','active_institutions','activation_rate',
                'new_institutions','total_registered_students','storage_users','purchase_users',
-               'active_names','day_of_week','year_month','year_week'] + feature_cols
+               'active_names','day_of_week','year_month','year_week'] + feature_cols + reg_extra + reg_feat
 
 dc = daily_df[[c for c in export_cols if c in daily_df.columns]].copy()
 dc['date'] = dc['date'].dt.strftime('%Y-%m-%d')
