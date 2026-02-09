@@ -253,3 +253,96 @@ with open(out, 'w', encoding='utf-8') as f:
 
 print(f"\nJSON saved: {out}")
 print(f"Summary: {json.dumps(dashboard_data['summary'], ensure_ascii=False, indent=2)}")
+
+# ============================================================
+# Per-academy daily data for search feature
+# ============================================================
+print("\nBuilding per-academy search data...")
+
+# Collect all feature column names across all dates
+all_feat_set = set()
+for date in sorted_dates:
+    all_feat_set.update(daily_frames[date]['usage_cols'])
+all_feat_cols = sorted(all_feat_set)
+
+# Shared date list (indices used by per-academy data)
+date_strs = [d.strftime('%Y-%m-%d') for d in sorted_dates]
+
+# Build per-academy data
+academy_meta = {}
+academy_inst = {}
+prev_day_vals = {}
+
+for di, date in enumerate(sorted_dates):
+    info = daily_frames[date]
+    df_day = info['df']
+    cols = info['cols']
+    reg_col = next((c for c in cols if '등록학생수' in c), None)
+    name_col = next((c for c in cols if '학원명' in c), None)
+
+    current_vals = {}
+
+    for code in df_day.index:
+        if code not in academy_meta:
+            name = ''
+            if name_col and name_col in df_day.columns:
+                n = df_day.loc[code, name_col]
+                if pd.notna(n):
+                    name = str(n)
+            academy_meta[code] = {'n': name, 'r': 1 if code in REG_CODES else 0}
+
+        if code not in academy_inst:
+            academy_inst[code] = {'d': [], 'a': [], 's': []}
+            # Per-feature arrays keyed by feature index (only non-zero tracked)
+            academy_inst[code]['_feat'] = {i: [] for i in range(len(all_feat_cols))}
+
+        ad = academy_inst[code]
+        ad['d'].append(di)
+
+        students = 0
+        if reg_col and reg_col in df_day.columns:
+            students = int(pd.to_numeric(df_day.loc[code, reg_col], errors='coerce') or 0)
+        ad['s'].append(students)
+
+        feat_vals = {}
+        is_active = 0
+        for fi, fc in enumerate(all_feat_cols):
+            val = 0
+            if fc in df_day.columns:
+                val = int(pd.to_numeric(df_day.loc[code, fc], errors='coerce') or 0)
+            ad['_feat'][fi].append(val)
+            feat_vals[fc] = val
+            if code in prev_day_vals and val > prev_day_vals[code].get(fc, 0):
+                is_active = 1
+
+        if code not in prev_day_vals and di > 0:
+            if any(v > 0 for v in feat_vals.values()):
+                is_active = 1
+
+        ad['a'].append(is_active)
+        current_vals[code] = feat_vals
+
+    prev_day_vals = current_vals
+
+# Compact: only keep non-zero feature arrays per academy
+for code, ad in academy_inst.items():
+    f_dict = {}
+    for fi, arr in ad['_feat'].items():
+        if any(v != 0 for v in arr):
+            f_dict[str(fi)] = arr
+    ad['f'] = f_dict
+    del ad['_feat']
+
+academy_search_inst = {
+    'dates': date_strs,
+    'feat_cols': all_feat_cols,
+    'meta': academy_meta,
+    'data': academy_inst,
+}
+
+out2 = os.path.join(os.path.dirname(__file__), "academy_search_inst.json")
+with open(out2, 'w', encoding='utf-8') as f:
+    json.dump(academy_search_inst, f, ensure_ascii=False, separators=(',', ':'))
+
+sz = os.path.getsize(out2)
+print(f"Academy inst search data saved: {out2} ({sz/1024/1024:.1f} MB, {len(academy_meta)} academies)")

@@ -8,12 +8,74 @@ with open(os.path.join(BASE, "학생 관련 데이터", "dashboard_data_v2.json"
 with open(os.path.join(BASE, "학원 관련 데이터", "dashboard_data.json"), 'r', encoding='utf-8') as f:
     inst_data = json.load(f)
 
+# Load academy search data
+with open(os.path.join(BASE, "학원 관련 데이터", "academy_search_inst.json"), 'r', encoding='utf-8') as f:
+    acad_inst_search = json.load(f)
+with open(os.path.join(BASE, "학생 관련 데이터", "academy_search_stu.json"), 'r', encoding='utf-8') as f:
+    acad_stu_search = json.load(f)
+
+# Build academy list for autocomplete, merging names from both sources
+# Supplement missing names from student data (which has academy_name per student row)
+import pandas as pd, glob, re as _re
+_stu_dir = os.path.join(BASE, "학생 관련 데이터", "data")
+_stu_files = sorted(glob.glob(os.path.join(_stu_dir, "*.csv")))
+_name_map = {}
+if _stu_files:
+    # Use the latest student CSV for name mapping
+    _latest = _stu_files[-1]
+    try:
+        _sdf = pd.read_csv(_latest, encoding='utf-8-sig')
+        _acol = next((c for c in _sdf.columns if '학원코드' in c), None)
+        _ncol = next((c for c in _sdf.columns if '학원명' in c), None)
+        if _acol and _ncol:
+            for _, row in _sdf.drop_duplicates(subset=_acol).iterrows():
+                code = str(row[_acol]).strip()
+                name = row[_ncol]
+                if pd.notna(name) and str(name).strip():
+                    _name_map[code] = str(name).strip()
+            print(f"Student name mapping loaded: {len(_name_map)} academies")
+    except Exception as e:
+        print(f"Warning: could not load student names: {e}")
+
+# Also load names from registered academy list
+_reg_csv = os.path.join(BASE, "가입학원_목록.csv")
+_reg_name_map = {}
+if os.path.exists(_reg_csv):
+    try:
+        _rdf = pd.read_csv(_reg_csv, encoding='utf-8-sig')
+        for _, row in _rdf.iterrows():
+            code = str(row.iloc[2]).strip()
+            name = str(row.iloc[0]).strip()
+            if code and name:
+                _reg_name_map[code] = name
+    except: pass
+
+meta = acad_inst_search.get('meta', {})
+academy_list = []
+for code, info in meta.items():
+    name = info['n'] or _name_map.get(code, '') or _reg_name_map.get(code, '')
+    academy_list.append({'c': code, 'n': name, 'r': info['r']})
+for code in acad_stu_search.get('data', {}):
+    if code not in meta:
+        name = _name_map.get(code, '') or _reg_name_map.get(code, '')
+        academy_list.append({'c': code, 'n': name, 'r': 0})
+academy_list.sort(key=lambda x: x['n'])
+
+# Write combined academy search JSON (separate file for lazy loading)
+combined_search = {'inst': acad_inst_search, 'stu': acad_stu_search}
+acad_search_path = os.path.join(BASE, "academy_search.json")
+with open(acad_search_path, 'w', encoding='utf-8') as f:
+    json.dump(combined_search, f, ensure_ascii=False, separators=(',', ':'))
+sz = os.path.getsize(acad_search_path)
+print(f"Combined academy search JSON: {sz/1024/1024:.1f} MB")
+
 OUTPUT = os.path.join(BASE, "학쫑_통합_대시보드.html")
 
 student_json = json.dumps(student_data['daily'], ensure_ascii=False)
 student_feat_json = json.dumps(student_data['feature_cols'], ensure_ascii=False)
 inst_json = json.dumps(inst_data['daily'], ensure_ascii=False)
 inst_feat_json = json.dumps(inst_data['feature_cols'], ensure_ascii=False)
+academy_list_json = json.dumps(academy_list, ensure_ascii=False)
 
 s_start = student_data['summary']['date_start']
 s_end = student_data['summary']['date_end']
@@ -125,11 +187,45 @@ html = f"""<!DOCTYPE html>
   .tbl-toolbar .cnt{{font-size:12px;color:#64748b}}
   .csv-btn{{padding:7px 16px;border:1px solid rgba(71,85,105,0.6);border-radius:8px;background:rgba(15,23,42,0.6);color:#94a3b8;cursor:pointer;font-size:12px;font-weight:500;transition:all .2s ease}}
   .csv-btn:hover{{background:rgba(51,65,85,0.6);color:#e2e8f0;transform:translateY(-1px)}}
+
+  .search-wrap{{position:relative;display:flex;align-items:center;gap:8px}}
+  .search-input{{background:rgba(15,23,42,0.8);border:1px solid rgba(71,85,105,0.6);border-radius:8px;color:#e2e8f0;padding:8px 14px 8px 36px;font-size:13px;font-family:inherit;width:260px;transition:border-color .2s,width .2s}}
+  .search-input:focus{{border-color:#3b82f6;outline:none;width:320px}}
+  .search-input::placeholder{{color:#64748b}}
+  .search-icon{{position:absolute;left:12px;color:#64748b;font-size:14px;pointer-events:none}}
+  .search-dropdown{{position:absolute;top:100%;left:0;right:0;margin-top:4px;background:#1e293b;border:1px solid rgba(71,85,105,0.7);border-radius:10px;max-height:320px;overflow-y:auto;z-index:100;box-shadow:0 8px 30px rgba(0,0,0,0.5);display:none}}
+  .search-dropdown.open{{display:block}}
+  .search-item{{padding:10px 14px;cursor:pointer;font-size:13px;border-bottom:1px solid rgba(51,65,85,0.3);display:flex;align-items:center;gap:8px;transition:background .15s}}
+  .search-item:last-child{{border-bottom:none}}
+  .search-item:hover,.search-item.selected{{background:rgba(59,130,246,0.15)}}
+  .search-item .code{{color:#94a3b8;font-family:monospace;font-size:12px;min-width:60px}}
+  .search-item .name{{color:#e2e8f0;flex:1}}
+  .search-item .badge{{font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600}}
+  .search-item .badge.reg{{background:rgba(74,222,128,0.15);color:#4ade80}}
+  .search-item .badge.unreg{{background:rgba(148,163,184,0.15);color:#94a3b8}}
+  .search-dropdown::-webkit-scrollbar{{width:6px}}
+  .search-dropdown::-webkit-scrollbar-track{{background:transparent}}
+  .search-dropdown::-webkit-scrollbar-thumb{{background:#475569;border-radius:3px}}
+
+  .acad-header{{display:flex;align-items:center;gap:16px;margin-bottom:20px;flex-wrap:wrap}}
+  .acad-title{{font-size:20px;font-weight:700;color:#f8fafc}}
+  .acad-code{{font-family:monospace;font-size:14px;color:#94a3b8;background:rgba(51,65,85,0.5);padding:4px 10px;border-radius:6px}}
+  .acad-badge{{font-size:12px;padding:4px 10px;border-radius:6px;font-weight:600}}
+  .acad-badge.reg{{background:rgba(74,222,128,0.15);color:#4ade80}}
+  .acad-badge.unreg{{background:rgba(148,163,184,0.15);color:#94a3b8}}
+  .acad-close{{margin-left:auto;padding:8px 18px;border:1px solid rgba(71,85,105,0.6);border-radius:8px;background:rgba(15,23,42,0.6);color:#94a3b8;cursor:pointer;font-size:13px;font-weight:500;transition:all .2s;font-family:inherit}}
+  .acad-close:hover{{background:rgba(51,65,85,0.6);color:#e2e8f0}}
+  .acad-loading{{text-align:center;padding:60px 20px;color:#94a3b8;font-size:14px}}
 </style>
 </head>
 <body>
 <div class="header">
   <h1>학쫑 통합 대시보드</h1>
+  <div class="search-wrap" id="searchWrap">
+    <span class="search-icon">&#128269;</span>
+    <input type="text" class="search-input" id="searchInput" placeholder="학원 코드 또는 이름으로 검색..." autocomplete="off" oninput="onSearchInput()" onfocus="onSearchFocus()" onkeydown="onSearchKey(event)">
+    <div class="search-dropdown" id="searchDropdown"></div>
+  </div>
   <div class="mode-bar">
     <button class="mode-btn active-student" id="modeStudent" onclick="switchMode('student')">학생 활성화</button>
     <button class="mode-btn" id="modeInst" onclick="switchMode('inst')">학원 활성화</button>
@@ -223,6 +319,20 @@ html = f"""<!DOCTYPE html>
       <h3>일별 데이터 테이블</h3>
       <div class="tbl-toolbar"><span class="cnt" id="tblCount"></span><button class="csv-btn" onclick="downloadCSV()">CSV 다운로드</button></div>
       <div class="tbl-wrap"><table class="data-tbl"><thead id="tblHead"></thead><tbody id="tblBody"></tbody></table></div>
+    </div>
+  </div>
+
+  <!-- Academy search view (hidden by default) -->
+  <div id="academyView" class="hidden">
+    <div class="acad-header" id="acadHeader"></div>
+    <div class="kpi-row" id="acadKpi"></div>
+    <div class="row2">
+      <div class="card"><h3 id="hAcadA">기능별 누적 사용량 추이</h3><div id="acad-feat" class="plot-tall"></div></div>
+      <div class="card"><h3 id="hAcadB">활성 여부 타임라인</h3><div id="acad-active" class="plot"></div></div>
+    </div>
+    <div class="row2">
+      <div class="card"><h3 id="hAcadC"></h3><div id="acad-c" class="plot"></div></div>
+      <div class="card"><h3 id="hAcadD">기능별 일일 변화량</h3><div id="acad-delta" class="plot"></div></div>
     </div>
   </div>
 
@@ -322,7 +432,7 @@ function switchMode(m){{
   document.querySelectorAll('.preset-btn.active,.tab-btn.active').forEach(b=>b.style.background=accent());
   document.querySelector('.switch input:checked+.slider')?.style&&document.querySelectorAll('.switch input:checked+.slider').forEach(s=>s.style.background=accent());
   buildTabs();
-  renderAll();
+  if(SEARCH_CODE&&ACAD_DATA){{renderAcademyView(SEARCH_CODE,ACAD_DATA)}}else{{renderAll()}}
 }}
 
 function buildTabs(){{
@@ -547,6 +657,244 @@ document.getElementById('endDate').addEventListener('change',()=>{{document.quer
 
 // ===== TAB =====
 function showTab(tab,btn){{document.querySelectorAll('.chart-section').forEach(el=>el.classList.add('hidden'));document.querySelectorAll('.tab-btn').forEach(el=>{{el.classList.remove('active');el.style.background=''}});document.getElementById('tab-'+tab).classList.remove('hidden');btn.classList.add('active');btn.style.background=accent();setTimeout(()=>document.querySelectorAll('#tab-'+tab+' .plot,#tab-'+tab+' .plot-tall').forEach(el=>Plotly.Plots.resize(el)),100)}}
+
+// ===== ACADEMY SEARCH =====
+const ACAD_LIST={academy_list_json};
+let ACAD_DATA=null; // loaded on demand
+let SEARCH_CODE=null; // currently selected academy code
+let searchIdx=-1;
+
+function onSearchInput(){{
+  const q=document.getElementById('searchInput').value.trim().toLowerCase();
+  const dd=document.getElementById('searchDropdown');
+  if(!q){{dd.classList.remove('open');return}}
+  const matches=ACAD_LIST.filter(a=>a.c.toLowerCase().includes(q)||a.n.toLowerCase().includes(q)).slice(0,50);
+  if(!matches.length){{dd.innerHTML='<div style="padding:12px;color:#64748b;font-size:13px">검색 결과 없음</div>';dd.classList.add('open');return}}
+  searchIdx=-1;
+  dd.innerHTML=matches.map((a,i)=>`<div class="search-item" data-code="${{a.c}}" onclick="selectAcademy('${{a.c}}')" onmouseenter="searchIdx=${{i}}"><span class="code">${{a.c}}</span><span class="name">${{a.n||'(이름 없음)'}}</span><span class="badge ${{a.r?'reg':'unreg'}}">${{a.r?'가입':'비가입'}}</span></div>`).join('');
+  dd.classList.add('open');
+}}
+function onSearchFocus(){{
+  const q=document.getElementById('searchInput').value.trim();
+  if(q) onSearchInput();
+}}
+function onSearchKey(e){{
+  const dd=document.getElementById('searchDropdown');
+  const items=dd.querySelectorAll('.search-item');
+  if(!items.length)return;
+  if(e.key==='ArrowDown'){{e.preventDefault();searchIdx=Math.min(searchIdx+1,items.length-1);items.forEach((el,i)=>el.classList.toggle('selected',i===searchIdx));items[searchIdx]?.scrollIntoView({{block:'nearest'}})}}
+  else if(e.key==='ArrowUp'){{e.preventDefault();searchIdx=Math.max(searchIdx-1,0);items.forEach((el,i)=>el.classList.toggle('selected',i===searchIdx));items[searchIdx]?.scrollIntoView({{block:'nearest'}})}}
+  else if(e.key==='Enter'&&searchIdx>=0){{e.preventDefault();const code=items[searchIdx]?.dataset?.code;if(code) selectAcademy(code)}}
+  else if(e.key==='Escape'){{dd.classList.remove('open')}}
+}}
+document.addEventListener('click',e=>{{
+  if(!document.getElementById('searchWrap').contains(e.target))
+    document.getElementById('searchDropdown').classList.remove('open');
+}});
+
+async function loadAcademyData(){{
+  if(ACAD_DATA) return ACAD_DATA;
+  try{{
+    const r=await fetch('academy_search.json');
+    if(!r.ok) throw new Error(r.status);
+    ACAD_DATA=await r.json();
+    return ACAD_DATA;
+  }}catch(e){{
+    console.error('Academy search data load failed:',e);
+    alert('학원 검색 데이터를 불러올 수 없습니다.\\nacademy_search.json 파일이 같은 경로에 있는지 확인해주세요.');
+    return null;
+  }}
+}}
+
+async function selectAcademy(code){{
+  document.getElementById('searchDropdown').classList.remove('open');
+  const info=ACAD_LIST.find(a=>a.c===code);
+  document.getElementById('searchInput').value=info?`${{info.n}} (${{code}})`:code;
+  SEARCH_CODE=code;
+
+  // Show loading
+  document.getElementById('academyView').classList.remove('hidden');
+  document.getElementById('academyView').innerHTML='<div class="acad-loading">데이터 로딩 중...</div>';
+
+  // Hide aggregate views
+  document.querySelectorAll('.note-box,.date-bar,#kpiRow').forEach(el=>{{el.style.display='none'}});
+  document.getElementById('tabBar').style.display='none';
+  document.querySelectorAll('.chart-section').forEach(el=>{{if(el.id!=='academyView') el.style.display='none'}});
+
+  const data=await loadAcademyData();
+  if(!data){{clearSearch();return}}
+
+  // Restore academy view HTML
+  document.getElementById('academyView').innerHTML=`
+    <div class="acad-header" id="acadHeader"></div>
+    <div class="kpi-row" id="acadKpi"></div>
+    <div class="row2">
+      <div class="card"><h3 id="hAcadA">기능별 누적 사용량 추이</h3><div id="acad-feat" class="plot-tall"></div></div>
+      <div class="card"><h3 id="hAcadB">활성 여부 타임라인</h3><div id="acad-active" class="plot"></div></div>
+    </div>
+    <div class="row2">
+      <div class="card"><h3 id="hAcadC"></h3><div id="acad-c" class="plot"></div></div>
+      <div class="card"><h3 id="hAcadD">기능별 일일 변화량</h3><div id="acad-delta" class="plot"></div></div>
+    </div>`;
+
+  renderAcademyView(code,data);
+}}
+
+function clearSearch(){{
+  SEARCH_CODE=null;
+  document.getElementById('searchInput').value='';
+  document.getElementById('academyView').classList.add('hidden');
+  // Restore aggregate views
+  document.querySelectorAll('.note-box,.date-bar,#kpiRow').forEach(el=>{{el.style.display=''}});
+  document.getElementById('tabBar').style.display='';
+  document.querySelectorAll('.chart-section').forEach(el=>{{el.style.display='';el.classList.add('hidden')}});
+  document.getElementById('tab-daily').classList.remove('hidden');
+  buildTabs();
+  renderAll();
+}}
+
+function renderAcademyView(code,data){{
+  const info=ACAD_LIST.find(a=>a.c===code)||{{c:code,n:'',r:0}};
+  const ac=accent();
+
+  // Header
+  document.getElementById('acadHeader').innerHTML=`
+    <span class="acad-title">${{info.n||'(이름 없음)'}}</span>
+    <span class="acad-code">${{code}}</span>
+    <span class="acad-badge ${{info.r?'reg':'unreg'}}">${{info.r?'가입학원':'비가입학원'}}</span>
+    <button class="acad-close" onclick="clearSearch()">&#10005; 전체 보기로 돌아가기</button>`;
+
+  if(MODE==='inst'){{
+    renderAcadInst(code,data,info,ac);
+  }}else{{
+    renderAcadStudent(code,data,info,ac);
+  }}
+}}
+
+function renderAcadInst(code,data,info,ac){{
+  const src=data.inst;
+  const allDates=src.dates;
+  const featCols=src.feat_cols;
+  const ad=src.data[code];
+
+  if(!ad||!ad.d.length){{
+    document.getElementById('acadKpi').innerHTML='<div class="kpi"><div class="label">데이터 없음</div><div class="value">-</div><div class="sub neutral">이 학원의 학원 활성화 데이터가 없습니다</div></div>';
+    return;
+  }}
+
+  const dates=ad.d.map(i=>allDates[i]);
+  const active=ad.a;
+  const students=ad.s;
+  const totalDays=dates.length;
+  const activeDays=active.filter(v=>v>0).length;
+  const lastStudents=students[students.length-1]||0;
+
+  // KPIs
+  document.getElementById('acadKpi').innerHTML=`
+    <div class="kpi"><div class="label">데이터 기간</div><div class="value">${{totalDays}}일</div><div class="sub neutral">${{dates[0]}} ~ ${{dates[dates.length-1]}}</div></div>
+    <div class="kpi"><div class="label">활성 일수</div><div class="value">${{activeDays}}일</div><div class="sub neutral">활성화율 ${{totalDays>0?(activeDays/totalDays*100).toFixed(1):0}}%</div></div>
+    <div class="kpi"><div class="label">최종 등록 학생 수</div><div class="value">${{lastStudents.toLocaleString()}}</div></div>
+    <div class="kpi"><div class="label">가입 상태</div><div class="value">${{info.r?'가입':'비가입'}}</div></div>`;
+
+  // Feature usage chart
+  const fn=I_FNAMES;
+  const fcl=ICOL;
+  const traces=[];
+  for(const [fi,arr] of Object.entries(ad.f)){{
+    const idx=parseInt(fi);
+    const name=fn[featCols[idx]]||featCols[idx];
+    traces.push({{x:dates,y:arr,name:name,type:'scatter',mode:'lines',line:{{color:fcl[idx%fcl.length],width:2}}}});
+  }}
+  if(!traces.length) traces.push({{x:dates,y:dates.map(()=>0),name:'사용량 없음',type:'scatter',mode:'lines'}});
+  document.getElementById('hAcadA').textContent='기능별 누적 사용량 추이';
+  Plotly.react('acad-feat',traces,{{...L,margin:{{...L.margin,b:60}}}},CFG);
+
+  // Active timeline
+  const activeColors=active.map(v=>v>0?'#4ade80':'rgba(71,85,105,0.3)');
+  Plotly.react('acad-active',[{{x:dates,y:active,type:'bar',marker:{{color:activeColors}},hovertemplate:'<b>%{{x}}</b><br>활성: %{{y}}<extra></extra>'}}],{{...L,yaxis:{{...L.yaxis,tickvals:[0,1],ticktext:['비활성','활성']}}}},CFG);
+
+  // Registered students chart
+  document.getElementById('hAcadC').textContent='등록 학생 수 추이';
+  Plotly.react('acad-c',[{{x:dates,y:students,type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:2}},fill:'tozeroy',fillcolor:'rgba(96,165,250,0.1)',name:'등록 학생'}}],{{...L}},CFG);
+
+  // Daily delta chart
+  const deltaTraces=[];
+  for(const [fi,arr] of Object.entries(ad.f)){{
+    const idx=parseInt(fi);
+    const name=fn[featCols[idx]]||featCols[idx];
+    const delta=arr.map((v,i)=>i===0?0:Math.max(0,v-arr[i-1]));
+    if(delta.some(v=>v>0)){{
+      deltaTraces.push({{x:dates,y:delta,name:name,type:'bar',marker:{{color:fcl[idx%fcl.length]}}}});
+    }}
+  }}
+  if(!deltaTraces.length) deltaTraces.push({{x:dates,y:dates.map(()=>0),name:'변화 없음',type:'bar'}});
+  Plotly.react('acad-delta',deltaTraces,{{...L,barmode:'stack'}},CFG);
+}}
+
+function renderAcadStudent(code,data,info,ac){{
+  const src=data.stu;
+  const allDates=src.dates;
+  const featCols=src.feat_cols;
+  const ad=src.data[code];
+
+  if(!ad||!ad.d.length){{
+    document.getElementById('acadKpi').innerHTML='<div class="kpi"><div class="label">데이터 없음</div><div class="value">-</div><div class="sub neutral">이 학원의 학생 활성화 데이터가 없습니다</div></div>';
+    return;
+  }}
+
+  const dates=ad.d.map(i=>allDates[i]);
+  const total=ad.t;
+  const activeArr=ad.a;
+  const totalDays=dates.length;
+  const avgActive=totalDays>0?Math.round(activeArr.reduce((a,b)=>a+b,0)/totalDays*10)/10:0;
+  const lastTotal=total[total.length-1]||0;
+  const maxActive=Math.max(...activeArr);
+
+  // KPIs
+  document.getElementById('acadKpi').innerHTML=`
+    <div class="kpi"><div class="label">데이터 기간</div><div class="value">${{totalDays}}일</div><div class="sub neutral">${{dates[0]}} ~ ${{dates[dates.length-1]}}</div></div>
+    <div class="kpi"><div class="label">최종 학생 수</div><div class="value">${{lastTotal.toLocaleString()}}</div></div>
+    <div class="kpi"><div class="label">일평균 활성 학생</div><div class="value">${{avgActive}}</div><div class="sub neutral">최대 ${{maxActive}}명</div></div>
+    <div class="kpi"><div class="label">가입 상태</div><div class="value">${{info.r?'가입':'비가입'}}</div></div>`;
+
+  // Feature usage chart
+  const fn=S_FNAMES;
+  const fcl=SCOL;
+  const traces=[];
+  for(const [fi,arr] of Object.entries(ad.f)){{
+    const idx=parseInt(fi);
+    const name=fn[featCols[idx]]||featCols[idx];
+    traces.push({{x:dates,y:arr,name:name,type:'scatter',mode:'lines',line:{{color:fcl[idx%fcl.length],width:2}}}});
+  }}
+  if(!traces.length) traces.push({{x:dates,y:dates.map(()=>0),name:'사용량 없음',type:'scatter',mode:'lines'}});
+  document.getElementById('hAcadA').textContent='기능별 누적 사용량 추이 (학생 합계)';
+  Plotly.react('acad-feat',traces,{{...L,margin:{{...L.margin,b:60}}}},CFG);
+
+  // Total vs Active students
+  document.getElementById('hAcadB').textContent='총 학생 수 vs 활성 학생 수';
+  Plotly.react('acad-active',[
+    {{x:dates,y:total,name:'총 학생',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:2}}}},
+    {{x:dates,y:activeArr,name:'활성 학생',type:'bar',marker:{{color:'rgba(74,222,128,0.5)'}}}},
+  ],{{...L}},CFG);
+
+  // Activation rate
+  document.getElementById('hAcadC').textContent='활성화율 추이';
+  const rates=total.map((t,i)=>t>0?Math.round(activeArr[i]/t*10000)/100:0);
+  Plotly.react('acad-c',[{{x:dates,y:rates,type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:2}},fill:'tozeroy',fillcolor:'rgba(245,158,11,0.08)',name:'활성화율'}}],{{...L,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
+
+  // Daily delta
+  const deltaTraces=[];
+  for(const [fi,arr] of Object.entries(ad.f)){{
+    const idx=parseInt(fi);
+    const name=fn[featCols[idx]]||featCols[idx];
+    const delta=arr.map((v,i)=>i===0?0:Math.max(0,v-arr[i-1]));
+    if(delta.some(v=>v>0)){{
+      deltaTraces.push({{x:dates,y:delta,name:name,type:'bar',marker:{{color:fcl[idx%fcl.length]}}}});
+    }}
+  }}
+  if(!deltaTraces.length) deltaTraces.push({{x:dates,y:dates.map(()=>0),name:'변화 없음',type:'bar'}});
+  Plotly.react('acad-delta',deltaTraces,{{...L,barmode:'stack'}},CFG);
+}}
 
 // INIT
 buildTabs();

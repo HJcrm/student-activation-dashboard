@@ -351,3 +351,104 @@ with open(output_path, 'w', encoding='utf-8') as f:
 
 print(f"\nJSON saved: {output_path}")
 print(f"Summary: {json.dumps(dashboard_data['summary'], ensure_ascii=False, indent=2)}")
+
+# ============================================================
+# Per-academy student aggregation for search feature
+# ============================================================
+print("\nBuilding per-academy student search data...")
+
+# Shared date list
+date_strs = [d.strftime('%Y-%m-%d') for d in sorted_dates]
+
+# Collect consistent usage columns
+all_stu_feat = set()
+for date in sorted_dates:
+    all_stu_feat.update(daily_frames[date]['usage_cols'])
+all_stu_feat_cols = sorted(all_stu_feat)
+
+# Build per-academy student data
+acad_stu = {}  # code -> {d: [], t: [], a: [], f: []}
+prev_student_vals = {}  # student_code -> {feat: val}
+
+for di, date in enumerate(sorted_dates):
+    info = daily_frames[date]
+    df_day = info['df']
+    usage_cols = info['usage_cols']
+    acad_code_col = info['academy_code_col']
+    academy_col = info['academy_col']
+
+    if not acad_code_col or acad_code_col not in df_day.columns:
+        continue
+
+    # Group students by academy
+    acad_groups = df_day.groupby(acad_code_col)
+    current_student_vals = {}
+
+    for acad_code, group in acad_groups:
+        acad_code = str(acad_code).strip()
+        if not acad_code or acad_code == 'nan':
+            continue
+
+        if acad_code not in acad_stu:
+            acad_stu[acad_code] = {'d': [], 't': [], 'a': []}
+            acad_stu[acad_code]['_feat'] = {i: [] for i in range(len(all_stu_feat_cols))}
+
+        ad = acad_stu[acad_code]
+        ad['d'].append(di)
+        ad['t'].append(len(group))
+
+        # Active students (delta-based)
+        active_count = 0
+        feat_sums = [0] * len(all_stu_feat_cols)
+
+        for stu_code in group.index:
+            stu_feats = {}
+            for fi, fc in enumerate(all_stu_feat_cols):
+                val = 0
+                if fc in group.columns:
+                    val = int(pd.to_numeric(group.loc[stu_code, fc] if fc in group.columns else 0, errors='coerce') or 0)
+                stu_feats[fc] = val
+                feat_sums[fi] += val
+
+            is_active = False
+            if stu_code in prev_student_vals:
+                for fc in all_stu_feat_cols:
+                    if stu_feats.get(fc, 0) > prev_student_vals[stu_code].get(fc, 0):
+                        is_active = True
+                        break
+            elif di > 0:
+                if any(v > 0 for v in stu_feats.values()):
+                    is_active = True
+
+            if is_active:
+                active_count += 1
+
+            current_student_vals[stu_code] = stu_feats
+
+        ad['a'].append(active_count)
+        for fi in range(len(all_stu_feat_cols)):
+            ad['_feat'][fi].append(feat_sums[fi])
+
+    prev_student_vals = current_student_vals
+
+# Compact: only keep non-zero feature arrays per academy
+for code, ad in acad_stu.items():
+    f_dict = {}
+    for fi, arr in ad['_feat'].items():
+        if any(v != 0 for v in arr):
+            f_dict[str(fi)] = arr
+    ad['f'] = f_dict
+    del ad['_feat']
+
+academy_search_stu = {
+    'dates': date_strs,
+    'feat_cols': all_stu_feat_cols,
+    'data': acad_stu,
+}
+
+out2 = os.path.join(os.path.dirname(__file__), "academy_search_stu.json")
+with open(out2, 'w', encoding='utf-8') as f:
+    json.dump(academy_search_stu, f, ensure_ascii=False, separators=(',', ':'))
+
+sz = os.path.getsize(out2)
+print(f"Academy student search data saved: {out2} ({sz/1024/1024:.1f} MB, {len(acad_stu)} academies)")
