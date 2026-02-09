@@ -234,7 +234,9 @@ html = f"""<!DOCTYPE html>
 <div class="container">
 
   <div class="note-box student" id="noteStudent">
-    <strong>활성 학생 기준:</strong> 전일 대비 수치형 데이터(열람권사용량, 발급권사용량, 주제발급횟수, 학쫑GPT사용량) 중 하나라도 증가한 학생. Y/N 플래그 제외.
+    <strong>PU (Premium User):</strong> 전일 대비 수치형 데이터(열람권·발급권·주제발급·학쫑GPT) 증가 학생 &nbsp;|&nbsp;
+    <strong>AU (Active User):</strong> PU + Y/N 플래그(샘플주제·AI진단·수시배치·계열선택) N→Y 변경 학생 &nbsp;|&nbsp;
+    <strong>TU:</strong> 전체 등록 학생
   </div>
   <div class="note-box inst hidden" id="noteInst">
     <strong>활성 학원 기준:</strong> 전일 대비 수치형 사용량(발급권·열람권·초안작성·생기부·배치표·계열검사·GPT 등) 중 하나라도 증가한 학원.
@@ -314,6 +316,32 @@ html = f"""<!DOCTYPE html>
     </div>
   </div>
 
+  <div id="tab-users" class="chart-section hidden">
+    <div class="row2">
+      <div class="card"><h3>일별 AU / PU</h3><div id="u-aupu" class="plot"></div></div>
+      <div class="card"><h3>일별 AU Rate / PU Rate (%)</h3><div id="u-rates" class="plot"></div></div>
+    </div>
+    <div class="row2">
+      <div class="card"><h3>Rolling WAU / MAU (7일/28일 순 이용자)</h3><div id="u-waumau" class="plot"></div></div>
+      <div class="card"><h3>Rolling WPU / MPU (7일/28일 순 이용자)</h3><div id="u-wpumpu" class="plot"></div></div>
+    </div>
+    <div class="row2">
+      <div class="card"><h3>Stickiness Ratio (WAU/MAU, WPU/MPU)</h3><div id="u-sticky" class="plot"></div></div>
+      <div class="card"><h3>Y/N 플래그 일별 Y 수</h3><div id="u-yn" class="plot"></div></div>
+    </div>
+  </div>
+
+  <div id="tab-retention" class="chart-section hidden">
+    <div class="row2">
+      <div class="card"><h3>D7 리텐션율 (가입 후 7일 내 활동 비율)</h3><div id="r-d7" class="plot"></div></div>
+      <div class="card"><h3>D28 리텐션율 (가입 후 28일 내 활동 비율)</h3><div id="r-d28" class="plot"></div></div>
+    </div>
+    <div class="row2">
+      <div class="card"><h3>D7 코호트 크기 (7일 전 가입 학생 수)</h3><div id="r-d7n" class="plot"></div></div>
+      <div class="card"><h3>D28 코호트 크기 (28일 전 가입 학생 수)</h3><div id="r-d28n" class="plot"></div></div>
+    </div>
+  </div>
+
   <div id="tab-table" class="chart-section hidden">
     <div class="card">
       <h3>일별 데이터 테이블</h3>
@@ -346,6 +374,12 @@ const S_FNAMES={json.dumps({
     '열람권사용량':'열람권 사용','발급권사용량':'발급권 사용',
     '주제발급횟수':'주제 발급','학쫑GPT사용량':'학쫑GPT 사용',
 }, ensure_ascii=False)};
+const S_YN_NAMES={json.dumps({
+    'yn_샘플주제과제발급여부':'샘플주제','yn_AILite진단여부':'AI Lite',
+    'yn_AiPro진단여부':'AI Pro','yn_수시배치표여부':'수시배치표','yn_계열선택검사여부':'계열선택',
+}, ensure_ascii=False)};
+const S_YN_KEYS=Object.keys(S_YN_NAMES);
+const S_YN_DELTA_KEYS=S_YN_KEYS.map(k=>k.replace('yn_','yn_delta_'));
 const S_CAT_COLS={json.dumps(student_data.get('cat_cols',[]), ensure_ascii=False)};
 const S_CNAMES={json.dumps({
     'cat_기본 이용권':'기본 이용권','cat_전 학교 이용권':'전 학교 이용권(전)',
@@ -440,7 +474,7 @@ function buildTabs(){{
   const tabs=[
     ['daily','일별'],['weekly','주별'],['monthly','월별'],['features','기능별 사용현황'],
   ];
-  if(MODE==='student') tabs.push(['extra','학년/이용권']);
+  if(MODE==='student'){{tabs.push(['users','사용자 지표']);tabs.push(['retention','리텐션']);tabs.push(['extra','학년/이용권']);}}
   else tabs.push(['extra','부가지표']);
   tabs.push(['table','데이터 테이블']);
   const bar=document.getElementById('tabBar');
@@ -481,7 +515,11 @@ function renderAll(){{
     <div class="kpi"><div class="label">일평균 활성 ${{e}}</div><div class="value">${{avgA}}</div><div class="sub neutral">최종일 ${{last[ak]}}${{MODE==='student'?'명':'개'}}</div></div>
     <div class="kpi"><div class="label">평균 활성화율</div><div class="value">${{avgR}}%</div></div>`;
   if(MODE==='student'){{
-    kpiHTML+=`<div class="kpi"><div class="label">학원 수 (최종일)</div><div class="value">${{(last.n_academies||0).toLocaleString()}}</div></div>`;
+    const avgAU=Math.round(F.reduce((a,d)=>a+(d.au||0),0)/F.length*10)/10;
+    const avgPU=Math.round(F.reduce((a,d)=>a+(d.pu||0),0)/F.length*10)/10;
+    const lastWM=last.wau_mau_ratio!=null?(last.wau_mau_ratio*100).toFixed(1)+'%':'-';
+    kpiHTML+=`<div class="kpi"><div class="label">일평균 AU / PU</div><div class="value">${{avgAU}} / ${{avgPU}}</div><div class="sub neutral">최종일 AU ${{last.au||0}} / PU ${{last.pu||0}}</div></div>`;
+    kpiHTML+=`<div class="kpi"><div class="label">WAU/MAU Stickiness</div><div class="value">${{lastWM}}</div><div class="sub neutral">WAU ${{(last.rolling_wau||0).toLocaleString()}} / MAU ${{(last.rolling_mau||0).toLocaleString()}}</div></div>`;
   }}else{{
     kpiHTML+=`<div class="kpi"><div class="label">등록 학생 수 (최종일)</div><div class="value">${{(last.total_registered_students||0).toLocaleString()}}</div></div>`;
   }}
@@ -618,6 +656,63 @@ function renderAll(){{
       {{x:dates,y:F.map(d=>d.storage_users||0),name:'스토리지 사용',type:'scatter',mode:'lines',line:{{color:'#4ade80',width:2}}}},
       {{x:dates,y:F.map(d=>d.purchase_users||0),name:'등록권 구매',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:2}}}},
     ],{{...L}},CFG);
+  }}
+
+  // USER METRICS TAB (student mode only)
+  if(MODE==='student'){{
+    const auV=F.map(d=>d.au||0),puV=F.map(d=>d.pu||0);
+    const auR=F.map(d=>d.au_rate||0),puR=F.map(d=>d.pu_rate||0);
+    // AU vs PU
+    Plotly.react('u-aupu',[
+      {{x:dates,y:auV,name:'AU (Active User)',type:'bar',marker:{{color:'rgba(96,165,250,0.6)'}},hovertemplate:'<b>%{{x}}</b><br>AU: <b>%{{y}}명</b><extra></extra>'}},
+      {{x:dates,y:puV,name:'PU (Premium User)',type:'bar',marker:{{color:'rgba(74,222,128,0.6)'}},hovertemplate:'<b>%{{x}}</b><br>PU: <b>%{{y}}명</b><extra></extra>'}},
+      {{x:dates,y:ma(auV),name:'AU 7일 이동평균',type:'scatter',mode:'lines',line:{{color:'#3b82f6',width:2.5}},hovertemplate:'<b>AU 7일 평균: %{{y}}</b><extra></extra>'}},
+    ],{{...hoverL,barmode:'overlay'}},CFG);
+    // AU Rate vs PU Rate
+    Plotly.react('u-rates',[
+      {{x:dates,y:auR,name:'AU Rate',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:2}},hovertemplate:'<b>%{{x}}</b><br>AU Rate: <b>%{{y:.2f}}%</b><extra></extra>'}},
+      {{x:dates,y:puR,name:'PU Rate',type:'scatter',mode:'lines',line:{{color:'#4ade80',width:2}},hovertemplate:'<b>%{{x}}</b><br>PU Rate: <b>%{{y:.2f}}%</b><extra></extra>'}},
+      {{x:dates,y:ma(auR),name:'AU Rate 7일 평균',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:2,dash:'dot'}},hovertemplate:'<b>AU Rate 7일 평균: %{{y:.2f}}%</b><extra></extra>'}},
+    ],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
+    // Rolling WAU/MAU
+    Plotly.react('u-waumau',[
+      {{x:dates,y:F.map(d=>d.rolling_wau||0),name:'WAU (7일)',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>WAU: <b>%{{y}}명</b><extra></extra>'}},
+      {{x:dates,y:F.map(d=>d.rolling_mau||0),name:'MAU (28일)',type:'scatter',mode:'lines',line:{{color:'#a78bfa',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>MAU: <b>%{{y}}명</b><extra></extra>'}},
+    ],{{...hoverL}},CFG);
+    // Rolling WPU/MPU
+    Plotly.react('u-wpumpu',[
+      {{x:dates,y:F.map(d=>d.rolling_wpu||0),name:'WPU (7일)',type:'scatter',mode:'lines',line:{{color:'#4ade80',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>WPU: <b>%{{y}}명</b><extra></extra>'}},
+      {{x:dates,y:F.map(d=>d.rolling_mpu||0),name:'MPU (28일)',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>MPU: <b>%{{y}}명</b><extra></extra>'}},
+    ],{{...hoverL}},CFG);
+    // Stickiness
+    Plotly.react('u-sticky',[
+      {{x:dates,y:F.map(d=>(d.wau_mau_ratio||0)*100),name:'WAU/MAU',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>WAU/MAU: <b>%{{y:.1f}}%</b><extra></extra>'}},
+      {{x:dates,y:F.map(d=>(d.wpu_mpu_ratio||0)*100),name:'WPU/MPU',type:'scatter',mode:'lines',line:{{color:'#4ade80',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>WPU/MPU: <b>%{{y:.1f}}%</b><extra></extra>'}},
+    ],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
+    // Y/N flags
+    const ynColors=['#f472b6','#38bdf8','#818cf8','#fb923c','#34d399'];
+    const ynTraces=S_YN_KEYS.map((k,i)=>({{x:dates,y:F.map(d=>d[k]||0),name:S_YN_NAMES[k],type:'scatter',mode:'lines',line:{{color:ynColors[i],width:2}},hovertemplate:`<b>%{{x}}</b><br>${{S_YN_NAMES[k]}}: <b>%{{y}}명</b><extra></extra>`}}));
+    Plotly.react('u-yn',ynTraces,{{...hoverL}},CFG);
+
+    // RETENTION TAB
+    // D7 retention
+    Plotly.react('r-d7',[
+      {{x:dates,y:F.map(d=>d.d7_au_rate||0),name:'D7 AU 리텐션',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>D7 AU: <b>%{{y:.1f}}%</b><br>코호트: %{{customdata}}명<extra></extra>',customdata:F.map(d=>d.d7_au_total||0)}},
+      {{x:dates,y:F.map(d=>d.d7_pu_rate||0),name:'D7 PU 리텐션',type:'scatter',mode:'lines',line:{{color:'#4ade80',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>D7 PU: <b>%{{y:.1f}}%</b><extra></extra>'}},
+    ],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%',range:[0,105]}}}},CFG);
+    // D28 retention
+    Plotly.react('r-d28',[
+      {{x:dates,y:F.map(d=>d.d28_au_rate||0),name:'D28 AU 리텐션',type:'scatter',mode:'lines',line:{{color:'#a78bfa',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>D28 AU: <b>%{{y:.1f}}%</b><br>코호트: %{{customdata}}명<extra></extra>',customdata:F.map(d=>d.d28_au_total||0)}},
+      {{x:dates,y:F.map(d=>d.d28_pu_rate||0),name:'D28 PU 리텐션',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>D28 PU: <b>%{{y:.1f}}%</b><extra></extra>'}},
+    ],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%',range:[0,105]}}}},CFG);
+    // D7 cohort size
+    Plotly.react('r-d7n',[
+      {{x:dates,y:F.map(d=>d.d7_au_total||0),name:'D7 코호트',type:'bar',marker:{{color:'rgba(96,165,250,0.5)'}},hovertemplate:'<b>%{{x}}</b><br>7일 전 가입: <b>%{{y}}명</b><extra></extra>'}},
+    ],{{...hoverL}},CFG);
+    // D28 cohort size
+    Plotly.react('r-d28n',[
+      {{x:dates,y:F.map(d=>d.d28_au_total||0),name:'D28 코호트',type:'bar',marker:{{color:'rgba(167,139,250,0.5)'}},hovertemplate:'<b>%{{x}}</b><br>28일 전 가입: <b>%{{y}}명</b><extra></extra>'}},
+    ],{{...hoverL}},CFG);
   }}
 
   renderTable(F);
