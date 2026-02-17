@@ -66,6 +66,10 @@ print(f"Valid days: {len(sorted_dates)}, Skipped: {len(skipped)}")
 # ============================================================
 results = []
 prev_date = None
+daily_active_sets = {}  # date -> set of active institution codes
+daily_active_reg_sets = {}  # date -> set of active registered institution codes
+daily_active_unreg_sets = {}  # date -> set of active unregistered institution codes
+daily_feat_sets = {}  # date -> {usage_col: set of institution codes with delta > 0}
 
 for date in sorted_dates:
     info = daily_frames[date]
@@ -96,6 +100,7 @@ for date in sorted_dates:
     active_inst = 0
     active_by_feature = {uc: 0 for uc in usage_cols}
     reg_by_feature = {uc: 0 for uc in usage_cols}
+    feat_active_sets = {}  # {usage_col: set of institution codes}
     active_codes = []
 
     if prev_date is not None:
@@ -114,6 +119,7 @@ for date in sorted_dates:
                 fa = delta[uc] > 0
                 active_by_feature[uc] = int(fa.sum())
                 reg_by_feature[uc] = int((fa & reg_common).sum())
+                feat_active_sets[uc] = set(common_ids[fa].tolist())
 
         # New institutions with usage > 0
         new_ids = df_today.index.difference(df_prev.index)
@@ -129,6 +135,7 @@ for date in sorted_dates:
                 fa = new_df[uc] > 0
                 active_by_feature[uc] += int(fa.sum())
                 reg_by_feature[uc] += int((fa & new_reg).sum())
+                feat_active_sets.setdefault(uc, set()).update(new_ids[fa].tolist())
 
     # Active names (all / reg / unreg)
     name_col = next((c for c in cols if '학원명' in c), None)
@@ -144,6 +151,12 @@ for date in sorted_dates:
 
     rac = [c for c in active_codes if c in REG_CODES]
     uac = [c for c in active_codes if c not in REG_CODES]
+
+    # Store active sets for revisit rate
+    daily_active_sets[date] = set(active_codes)
+    daily_active_reg_sets[date] = set(rac)
+    daily_active_unreg_sets[date] = set(uac)
+    daily_feat_sets[date] = feat_active_sets
 
     # Registration breakdown
     rm = df_today.index.isin(REG_CODES)
@@ -198,6 +211,142 @@ daily_df['year_week'] = daily_df['date'].dt.strftime('%Y-W%W')
 
 feature_cols = [c for c in daily_df.columns if any(k in c for k in USAGE_KEYWORDS) and not c.startswith('reg_') and not c.startswith('unreg_')]
 
+# ============================================================
+# Revisit Rate (D1 / D7)
+# ============================================================
+print("\nComputing Revisit Rate (D1/D7)...")
+
+valid_dates = daily_df['date'].tolist()
+revisit_d1_rate = []
+revisit_d1_count = []
+revisit_d1_base = []
+revisit_d7_rate = []
+revisit_d7_count = []
+revisit_d7_base = []
+reg_revisit_d1_rate = []
+reg_revisit_d7_rate = []
+unreg_revisit_d1_rate = []
+unreg_revisit_d7_rate = []
+
+for i, date in enumerate(valid_dates):
+    # D1: yesterday's active ∩ today's active / yesterday's active
+    if i >= 1:
+        prev_d = valid_dates[i - 1]
+        prev_set = daily_active_sets.get(prev_d, set())
+        today_set = daily_active_sets.get(date, set())
+        d1_base = len(prev_set)
+        d1_count = len(today_set & prev_set) if d1_base > 0 else 0
+        d1_rate = round(d1_count / d1_base * 100, 2) if d1_base > 0 else 0
+        # reg
+        prev_reg = daily_active_reg_sets.get(prev_d, set())
+        today_reg = daily_active_reg_sets.get(date, set())
+        r_d1_base = len(prev_reg)
+        r_d1 = round(len(today_reg & prev_reg) / r_d1_base * 100, 2) if r_d1_base > 0 else 0
+        # unreg
+        prev_unreg = daily_active_unreg_sets.get(prev_d, set())
+        today_unreg = daily_active_unreg_sets.get(date, set())
+        u_d1_base = len(prev_unreg)
+        u_d1 = round(len(today_unreg & prev_unreg) / u_d1_base * 100, 2) if u_d1_base > 0 else 0
+    else:
+        d1_base = d1_count = 0; d1_rate = 0; r_d1 = 0; u_d1 = 0
+
+    # D7: 7-day-ago active ∩ today's active / 7-day-ago active
+    if i >= 7:
+        d7_d = valid_dates[i - 7]
+        d7_prev = daily_active_sets.get(d7_d, set())
+        today_set7 = daily_active_sets.get(date, set())
+        d7_base = len(d7_prev)
+        d7_count = len(today_set7 & d7_prev) if d7_base > 0 else 0
+        d7_rate = round(d7_count / d7_base * 100, 2) if d7_base > 0 else 0
+        # reg
+        d7_prev_reg = daily_active_reg_sets.get(d7_d, set())
+        today_reg7 = daily_active_reg_sets.get(date, set())
+        r_d7_base = len(d7_prev_reg)
+        r_d7 = round(len(today_reg7 & d7_prev_reg) / r_d7_base * 100, 2) if r_d7_base > 0 else 0
+        # unreg
+        d7_prev_unreg = daily_active_unreg_sets.get(d7_d, set())
+        today_unreg7 = daily_active_unreg_sets.get(date, set())
+        u_d7_base = len(d7_prev_unreg)
+        u_d7 = round(len(today_unreg7 & d7_prev_unreg) / u_d7_base * 100, 2) if u_d7_base > 0 else 0
+    else:
+        d7_base = d7_count = 0; d7_rate = 0; r_d7 = 0; u_d7 = 0
+
+    revisit_d1_rate.append(d1_rate)
+    revisit_d1_count.append(d1_count)
+    revisit_d1_base.append(d1_base)
+    revisit_d7_rate.append(d7_rate)
+    revisit_d7_count.append(d7_count)
+    revisit_d7_base.append(d7_base)
+    reg_revisit_d1_rate.append(r_d1)
+    reg_revisit_d7_rate.append(r_d7)
+    unreg_revisit_d1_rate.append(u_d1)
+    unreg_revisit_d7_rate.append(u_d7)
+
+daily_df['revisit_d1_rate'] = revisit_d1_rate
+daily_df['revisit_d1_count'] = revisit_d1_count
+daily_df['revisit_d1_base'] = revisit_d1_base
+daily_df['revisit_d7_rate'] = revisit_d7_rate
+daily_df['revisit_d7_count'] = revisit_d7_count
+daily_df['revisit_d7_base'] = revisit_d7_base
+daily_df['reg_revisit_d1_rate'] = reg_revisit_d1_rate
+daily_df['reg_revisit_d7_rate'] = reg_revisit_d7_rate
+daily_df['unreg_revisit_d1_rate'] = unreg_revisit_d1_rate
+daily_df['unreg_revisit_d7_rate'] = unreg_revisit_d7_rate
+
+print(f"Revisit rate sample (last 5 days):")
+print(daily_df[['date','revisit_d1_rate','revisit_d1_count','revisit_d1_base','revisit_d7_rate']].tail(5).to_string())
+
+# ============================================================
+# Per-feature D7 Retention
+# ============================================================
+print(f"\nComputing per-feature D7 retention for {len(feature_cols)} features...")
+
+# Build per-feature date sets: feature -> {inst_code -> set of dates}
+inst_feat_dates = {}
+for d, feat_sets in daily_feat_sets.items():
+    for fc, codes in feat_sets.items():
+        if fc not in inst_feat_dates:
+            inst_feat_dates[fc] = {}
+        for code in codes:
+            if code not in inst_feat_dates[fc]:
+                inst_feat_dates[fc][code] = set()
+            inst_feat_dates[fc][code].add(d)
+
+# Build inst_active_dates for service retention check
+inst_active_dates = {}
+for d, codes in daily_active_sets.items():
+    for code in codes:
+        if code not in inst_active_dates:
+            inst_active_dates[code] = set()
+        inst_active_dates[code].add(d)
+
+feat_ret_dates = [d.strftime('%Y-%m-%d') for d in valid_dates]
+feat_ret_same = {}
+feat_ret_svc = {}
+
+for fc in feature_cols:
+    same_rates = []
+    svc_rates = []
+    for date in valid_dates:
+        d7_target = date - pd.Timedelta(days=7)
+        cohort = daily_feat_sets.get(d7_target, {}).get(fc, set())
+        if not cohort:
+            same_rates.append(0)
+            svc_rates.append(0)
+            continue
+        same_count = sum(1 for s in cohort if any(
+            d7_target < d <= date for d in inst_feat_dates.get(fc, {}).get(s, set())
+        ))
+        svc_count = sum(1 for s in cohort if any(
+            d7_target < d <= date for d in inst_active_dates.get(s, set())
+        ))
+        same_rates.append(round(same_count / len(cohort) * 100, 2))
+        svc_rates.append(round(svc_count / len(cohort) * 100, 2))
+    feat_ret_same[fc] = same_rates
+    feat_ret_svc[fc] = svc_rates
+
+print("Per-feature D7 retention computed")
+
 print(f"\nClean daily data: {len(daily_df)} days")
 print(f"Feature columns: {feature_cols}")
 print(f"\nSample:")
@@ -215,11 +364,15 @@ def safe_val(v):
     return v
 
 reg_extra = ['reg_total','reg_active','reg_rate','reg_new','reg_students','reg_storage','reg_purchase','reg_active_names',
-             'unreg_total','unreg_active','unreg_rate','unreg_new','unreg_students','unreg_storage','unreg_purchase','unreg_active_names']
+             'reg_revisit_d1_rate','reg_revisit_d7_rate',
+             'unreg_total','unreg_active','unreg_rate','unreg_new','unreg_students','unreg_storage','unreg_purchase','unreg_active_names',
+             'unreg_revisit_d1_rate','unreg_revisit_d7_rate']
 reg_feat = [f'reg_{c}' for c in feature_cols] + [f'unreg_{c}' for c in feature_cols]
 export_cols = ['date','total_institutions','active_institutions','activation_rate',
                'new_institutions','total_registered_students','storage_users','purchase_users',
-               'active_names','day_of_week','year_month','year_week'] + feature_cols + reg_extra + reg_feat
+               'active_names','day_of_week','year_month','year_week',
+               'revisit_d1_rate','revisit_d1_count','revisit_d1_base',
+               'revisit_d7_rate','revisit_d7_count','revisit_d7_base'] + feature_cols + reg_extra + reg_feat
 
 dc = daily_df[[c for c in export_cols if c in daily_df.columns]].copy()
 dc['date'] = dc['date'].dt.strftime('%Y-%m-%d')
@@ -233,6 +386,11 @@ for r in records:
 dashboard_data = {
     'daily': records,
     'feature_cols': feature_cols,
+    'feat_retention': {
+        'dates': feat_ret_dates,
+        'same': feat_ret_same,
+        'service': feat_ret_svc,
+    },
     'summary': {
         'total_days': len(daily_df),
         'date_start': daily_df['date'].min().strftime('%Y-%m-%d'),

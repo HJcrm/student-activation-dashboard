@@ -137,6 +137,9 @@ prev_date = None
 # Per-day AU/PU code sets for Rolling calculation
 daily_au_sets = {}  # date -> set of student codes
 daily_pu_sets = {}  # date -> set of student codes
+daily_au_reg_sets = {}  # date -> set of registered AU student codes
+daily_au_unreg_sets = {}  # date -> set of unregistered AU student codes
+daily_feat_sets = {}  # date -> {usage_col: set of student codes with delta > 0}
 # Student creation dates (accumulated across CSVs)
 student_creation_dates = {}  # student_code -> pd.Timestamp
 
@@ -190,6 +193,7 @@ for date in sorted_dates:
     au_codes = set()  # Active Users (PU + Y/N flag changes)
     active_by_feature = {uc: 0 for uc in usage_cols}
     reg_by_feature = {uc: 0 for uc in usage_cols}
+    feat_active_sets = {}  # {usage_col: set of student codes}
 
     # Registration mask
     acad_code = info['academy_code_col']
@@ -221,6 +225,7 @@ for date in sorted_dates:
                     fa = delta[uc] > 0
                     active_by_feature[uc] = int(fa.sum())
                     reg_by_feature[uc] = int((fa & reg_cm).sum())
+                    feat_active_sets[uc] = set(common_students[fa].tolist())
 
             # AU additional: Y/N flag N→Y changes
             common_yn = [c for c in yn_cols if c in prev_yn_cols and c in df_prev.columns]
@@ -251,6 +256,7 @@ for date in sorted_dates:
                     fa = new_df[uc] > 0
                     active_by_feature[uc] += int(fa.sum())
                     reg_by_feature[uc] += int((fa & new_reg_m).sum())
+                    feat_active_sets.setdefault(uc, set()).update(new_student_ids[fa].tolist())
 
             # New students AU: any usage > 0 OR any Y/N == Y
             new_yn_mask = pd.Series(False, index=new_student_ids)
@@ -265,6 +271,7 @@ for date in sorted_dates:
     # Store daily code sets
     daily_au_sets[date] = au_codes
     daily_pu_sets[date] = pu_codes
+    daily_feat_sets[date] = feat_active_sets
 
     # Counts
     pu_count = len(pu_codes)
@@ -289,6 +296,10 @@ for date in sorted_dates:
     uac = [c for c in active_student_codes if c not in rac]
     pu_rac = [c for c in pu_codes if c in reg_mask.index and reg_mask.get(c, False)]
     pu_uac = [c for c in pu_codes if c not in pu_rac]
+
+    # Store reg/unreg AU sets for revisit rate
+    daily_au_reg_sets[date] = set(rac)
+    daily_au_unreg_sets[date] = set(uac)
 
     # Registration breakdown totals
     rt = int(reg_mask.sum()); ut = total_students - rt
@@ -421,13 +432,97 @@ print(f"Rolling sample (last 5 days):")
 print(daily_df[['date','rolling_wau','rolling_mau','wau_mau_ratio','rolling_wpu','rolling_mpu','wpu_mpu_ratio']].tail(5).to_string())
 
 # ============================================================
-# 2c. D7 / D28 Retention
+# 2b-2. Revisit Rate (D1 / D7)
 # ============================================================
-print(f"\nComputing D7/D28 retention... ({len(student_creation_dates)} students with creation dates)")
+print("\nComputing Revisit Rate (D1/D7)...")
 
-# For each day, find students whose D7/D28 window closes on that day
-# D7: students whose creation_date + 7 days == today
-# Check if they were AU/PU at least once during [creation_date, creation_date+7]
+revisit_d1_rate = []
+revisit_d1_count = []
+revisit_d1_base = []
+revisit_d7_rate = []
+revisit_d7_count = []
+revisit_d7_base = []
+# reg/unreg variants
+reg_revisit_d1_rate = []
+reg_revisit_d7_rate = []
+unreg_revisit_d1_rate = []
+unreg_revisit_d7_rate = []
+
+for i, date in enumerate(valid_dates):
+    # D1: yesterday's AU ∩ today's AU / yesterday's AU
+    if i >= 1:
+        prev_d = valid_dates[i - 1]
+        prev_au = daily_au_sets.get(prev_d, set())
+        today_au = daily_au_sets.get(date, set())
+        d1_base = len(prev_au)
+        d1_count = len(today_au & prev_au) if d1_base > 0 else 0
+        d1_rate = round(d1_count / d1_base * 100, 2) if d1_base > 0 else 0
+        # reg
+        prev_reg = daily_au_reg_sets.get(prev_d, set())
+        today_reg = daily_au_reg_sets.get(date, set())
+        r_d1_base = len(prev_reg)
+        r_d1 = round(len(today_reg & prev_reg) / r_d1_base * 100, 2) if r_d1_base > 0 else 0
+        # unreg
+        prev_unreg = daily_au_unreg_sets.get(prev_d, set())
+        today_unreg = daily_au_unreg_sets.get(date, set())
+        u_d1_base = len(prev_unreg)
+        u_d1 = round(len(today_unreg & prev_unreg) / u_d1_base * 100, 2) if u_d1_base > 0 else 0
+    else:
+        d1_base = d1_count = 0; d1_rate = 0; r_d1 = 0; u_d1 = 0
+
+    # D7: 7-day-ago AU ∩ today's AU / 7-day-ago AU
+    if i >= 7:
+        d7_d = valid_dates[i - 7]
+        d7_prev = daily_au_sets.get(d7_d, set())
+        today_au7 = daily_au_sets.get(date, set())
+        d7_base = len(d7_prev)
+        d7_count = len(today_au7 & d7_prev) if d7_base > 0 else 0
+        d7_rate = round(d7_count / d7_base * 100, 2) if d7_base > 0 else 0
+        # reg
+        d7_prev_reg = daily_au_reg_sets.get(d7_d, set())
+        today_reg7 = daily_au_reg_sets.get(date, set())
+        r_d7_base = len(d7_prev_reg)
+        r_d7 = round(len(today_reg7 & d7_prev_reg) / r_d7_base * 100, 2) if r_d7_base > 0 else 0
+        # unreg
+        d7_prev_unreg = daily_au_unreg_sets.get(d7_d, set())
+        today_unreg7 = daily_au_unreg_sets.get(date, set())
+        u_d7_base = len(d7_prev_unreg)
+        u_d7 = round(len(today_unreg7 & d7_prev_unreg) / u_d7_base * 100, 2) if u_d7_base > 0 else 0
+    else:
+        d7_base = d7_count = 0; d7_rate = 0; r_d7 = 0; u_d7 = 0
+
+    revisit_d1_rate.append(d1_rate)
+    revisit_d1_count.append(d1_count)
+    revisit_d1_base.append(d1_base)
+    revisit_d7_rate.append(d7_rate)
+    revisit_d7_count.append(d7_count)
+    revisit_d7_base.append(d7_base)
+    reg_revisit_d1_rate.append(r_d1)
+    reg_revisit_d7_rate.append(r_d7)
+    unreg_revisit_d1_rate.append(u_d1)
+    unreg_revisit_d7_rate.append(u_d7)
+
+daily_df['revisit_d1_rate'] = revisit_d1_rate
+daily_df['revisit_d1_count'] = revisit_d1_count
+daily_df['revisit_d1_base'] = revisit_d1_base
+daily_df['revisit_d7_rate'] = revisit_d7_rate
+daily_df['revisit_d7_count'] = revisit_d7_count
+daily_df['revisit_d7_base'] = revisit_d7_base
+daily_df['reg_revisit_d1_rate'] = reg_revisit_d1_rate
+daily_df['reg_revisit_d7_rate'] = reg_revisit_d7_rate
+daily_df['unreg_revisit_d1_rate'] = unreg_revisit_d1_rate
+daily_df['unreg_revisit_d7_rate'] = unreg_revisit_d7_rate
+
+print(f"Revisit rate sample (last 5 days):")
+print(daily_df[['date','revisit_d1_rate','revisit_d1_count','revisit_d1_base','revisit_d7_rate','revisit_d7_count','revisit_d7_base']].tail(5).to_string())
+
+# ============================================================
+# 2c. D7 / D28 Retention (AU-based cohort)
+# ============================================================
+print("\nComputing D7/D28 retention (AU-based cohort)...")
+
+# Cohort = students who were AU on exactly N days ago
+# Retained = at least 1 AU/PU day during (target, today]
 d7_au_count = []
 d7_au_total = []
 d7_au_rate = []
@@ -439,7 +534,7 @@ d7_pu_rate = []
 d28_pu_count = []
 d28_pu_rate = []
 
-# Build student → set of AU/PU dates (only within our data range)
+# Build student → set of AU/PU dates
 stu_au_dates = {}  # student_code -> set of dates
 stu_pu_dates = {}
 for d, au_set in daily_au_sets.items():
@@ -454,9 +549,9 @@ for d, pu_set in daily_pu_sets.items():
         stu_pu_dates[code].add(d)
 
 for date in valid_dates:
-    # D7 cohort: students created exactly 7 days ago
+    # D7 cohort: students who were AU exactly 7 days ago
     d7_target = date - pd.Timedelta(days=7)
-    d7_cohort = [s for s, cd in student_creation_dates.items() if cd.date() == d7_target.date()]
+    d7_cohort = daily_au_sets.get(d7_target, set())
     d7_retained_au = sum(1 for s in d7_cohort if any(
         d7_target < d <= date for d in stu_au_dates.get(s, set())
     ))
@@ -469,9 +564,9 @@ for date in valid_dates:
     d7_pu_count.append(d7_retained_pu)
     d7_pu_rate.append(round(d7_retained_pu / len(d7_cohort) * 100, 2) if d7_cohort else 0)
 
-    # D28 cohort: students created exactly 28 days ago
+    # D28 cohort: students who were AU exactly 28 days ago
     d28_target = date - pd.Timedelta(days=28)
-    d28_cohort = [s for s, cd in student_creation_dates.items() if cd.date() == d28_target.date()]
+    d28_cohort = daily_au_sets.get(d28_target, set())
     d28_retained_au = sum(1 for s in d28_cohort if any(
         d28_target < d <= date for d in stu_au_dates.get(s, set())
     ))
@@ -495,8 +590,55 @@ daily_df['d28_au_rate'] = d28_au_rate
 daily_df['d28_pu_count'] = d28_pu_count
 daily_df['d28_pu_rate'] = d28_pu_rate
 
-print(f"D7/D28 retention sample (last 5 days):")
+print(f"D7/D28 retention (AU-based) sample (last 5 days):")
 print(daily_df[['date','d7_au_total','d7_au_rate','d7_pu_rate','d28_au_total','d28_au_rate','d28_pu_rate']].tail(5).to_string())
+
+# ============================================================
+# 2d. Per-feature D7 Retention
+# ============================================================
+print(f"\nComputing per-feature D7 retention for {len(feature_cols)} features...")
+
+# Build per-feature date sets: feature -> {student_code -> set of dates}
+stu_feat_dates = {}
+for d, feat_sets in daily_feat_sets.items():
+    for fc, codes in feat_sets.items():
+        if fc not in stu_feat_dates:
+            stu_feat_dates[fc] = {}
+        for code in codes:
+            if code not in stu_feat_dates[fc]:
+                stu_feat_dates[fc][code] = set()
+            stu_feat_dates[fc][code].add(d)
+
+feat_ret_dates = [d.strftime('%Y-%m-%d') for d in valid_dates]
+feat_ret_same = {}
+feat_ret_svc = {}
+
+for fc in feature_cols:
+    same_rates = []
+    svc_rates = []
+    for date in valid_dates:
+        d7_target = date - pd.Timedelta(days=7)
+        cohort = daily_feat_sets.get(d7_target, {}).get(fc, set())
+        if not cohort:
+            same_rates.append(0)
+            svc_rates.append(0)
+            continue
+        # Same-feature: at least 1 day active in same feature during (target, today]
+        same_count = sum(1 for s in cohort if any(
+            d7_target < d <= date for d in stu_feat_dates.get(fc, {}).get(s, set())
+        ))
+        # Service: at least 1 day AU during (target, today]
+        svc_count = sum(1 for s in cohort if any(
+            d7_target < d <= date for d in stu_au_dates.get(s, set())
+        ))
+        same_rates.append(round(same_count / len(cohort) * 100, 2))
+        svc_rates.append(round(svc_count / len(cohort) * 100, 2))
+    feat_ret_same[fc] = same_rates
+    feat_ret_svc[fc] = svc_rates
+
+print("Per-feature D7 retention sample (last day):")
+for fc in feature_cols:
+    print(f"  {fc}: same={feat_ret_same[fc][-1]}%, svc={feat_ret_svc[fc][-1]}%")
 
 # ============================================================
 # 4. Weekly / Monthly aggregation
@@ -515,6 +657,7 @@ weekly_df = daily_df.groupby('year_week').agg(
     avg_rolling_wau=('rolling_wau', 'mean'), avg_rolling_mau=('rolling_mau', 'mean'),
     avg_rolling_wpu=('rolling_wpu', 'mean'), avg_rolling_mpu=('rolling_mpu', 'mean'),
     avg_wau_mau=('wau_mau_ratio', 'mean'), avg_wpu_mpu=('wpu_mpu_ratio', 'mean'),
+    avg_revisit_d1_rate=('revisit_d1_rate', 'mean'), avg_revisit_d7_rate=('revisit_d7_rate', 'mean'),
     avg_d7_au_rate=('d7_au_rate', 'mean'), avg_d7_pu_rate=('d7_pu_rate', 'mean'),
     avg_d28_au_rate=('d28_au_rate', 'mean'), avg_d28_pu_rate=('d28_pu_rate', 'mean'),
     n_days=('date', 'count'),
@@ -534,6 +677,7 @@ monthly_df = daily_df.groupby('year_month').agg(
     avg_rolling_wau=('rolling_wau', 'mean'), avg_rolling_mau=('rolling_mau', 'mean'),
     avg_rolling_wpu=('rolling_wpu', 'mean'), avg_rolling_mpu=('rolling_mpu', 'mean'),
     avg_wau_mau=('wau_mau_ratio', 'mean'), avg_wpu_mpu=('wpu_mpu_ratio', 'mean'),
+    avg_revisit_d1_rate=('revisit_d1_rate', 'mean'), avg_revisit_d7_rate=('revisit_d7_rate', 'mean'),
     avg_d7_au_rate=('d7_au_rate', 'mean'), avg_d7_pu_rate=('d7_pu_rate', 'mean'),
     avg_d28_au_rate=('d28_au_rate', 'mean'), avg_d28_pu_rate=('d28_pu_rate', 'mean'),
     n_days=('date', 'count'),
@@ -556,12 +700,16 @@ def safe_val(v):
 
 reg_extra = ['reg_total','reg_active','reg_rate','reg_new','reg_au','reg_pu',
              'reg_n_academies','reg_active_academies',
+             'reg_revisit_d1_rate','reg_revisit_d7_rate',
              'unreg_total','unreg_active','unreg_rate','unreg_new','unreg_au','unreg_pu',
-             'unreg_n_academies','unreg_active_academies']
+             'unreg_n_academies','unreg_active_academies',
+             'unreg_revisit_d1_rate','unreg_revisit_d7_rate']
 reg_feat = [f'reg_{c}' for c in feature_cols] + [f'unreg_{c}' for c in feature_cols]
 new_metric_cols = ['au','pu','au_rate','pu_rate',
                    'rolling_wau','rolling_mau','rolling_wpu','rolling_mpu',
                    'wau_mau_ratio','wpu_mpu_ratio',
+                   'revisit_d1_rate','revisit_d1_count','revisit_d1_base',
+                   'revisit_d7_rate','revisit_d7_count','revisit_d7_base',
                    'd7_au_count','d7_au_total','d7_au_rate','d7_pu_count','d7_pu_rate',
                    'd28_au_count','d28_au_total','d28_au_rate','d28_pu_count','d28_pu_rate']
 daily_export_cols = ['date','total_students','active_students','activation_rate',
@@ -587,6 +735,11 @@ dashboard_data = {
     'monthly': rows_to_dicts(monthly_df),
     'feature_cols': feature_cols,
     'cat_cols': cat_cols,
+    'feat_retention': {
+        'dates': feat_ret_dates,
+        'same': feat_ret_same,
+        'service': feat_ret_svc,
+    },
     'summary': {
         'total_days': len(daily_df),
         'date_start': daily_df['date'].min().strftime('%Y-%m-%d'),

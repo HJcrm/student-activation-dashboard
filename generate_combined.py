@@ -76,6 +76,8 @@ student_feat_json = json.dumps(student_data['feature_cols'], ensure_ascii=False)
 inst_json = json.dumps(inst_data['daily'], ensure_ascii=False)
 inst_feat_json = json.dumps(inst_data['feature_cols'], ensure_ascii=False)
 academy_list_json = json.dumps(academy_list, ensure_ascii=False)
+student_fret_json = json.dumps(student_data.get('feat_retention', {}), ensure_ascii=False)
+inst_fret_json = json.dumps(inst_data.get('feat_retention', {}), ensure_ascii=False)
 
 s_start = student_data['summary']['date_start']
 s_end = student_data['summary']['date_end']
@@ -135,6 +137,25 @@ html = f"""<!DOCTYPE html>
   .reg-btn:last-child{{border-right:none}}
   .reg-btn:hover{{background:rgba(51,65,85,0.5);color:#e2e8f0}}
   .reg-btn.active{{background:rgba(59,130,246,0.25);color:#60a5fa;font-weight:600}}
+
+  .feat-filter{{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px}}
+  .feat-btn{{padding:6px 14px;border:1px solid rgba(71,85,105,0.5);border-radius:20px;background:rgba(15,23,42,0.6);color:#94a3b8;cursor:pointer;font-size:12px;font-weight:500;transition:all .2s;font-family:inherit}}
+  .feat-btn:hover{{background:rgba(51,65,85,0.5);color:#e2e8f0}}
+  .feat-btn.active{{color:#fff;font-weight:600}}
+  .fret-summary{{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}}
+  .fret-summary th{{background:linear-gradient(180deg,#334155,#2d3a4d);color:#e2e8f0;padding:10px 12px;text-align:right;font-weight:600;border-bottom:2px solid rgba(71,85,105,0.6)}}
+  .fret-summary th:first-child{{text-align:left}}
+  .fret-summary td{{padding:8px 12px;text-align:right;border-bottom:1px solid #1e293b}}
+  .fret-summary td:first-child{{text-align:left;font-weight:500}}
+  .fret-summary tbody tr{{background:#0a0f1e;transition:background .15s;cursor:pointer}}
+  .fret-summary tbody tr:hover{{background:rgba(59,130,246,0.15)}}
+  .fret-summary tbody tr:nth-child(even){{background:#0d1425}}
+  .fret-summary tbody tr:nth-child(even):hover{{background:rgba(59,130,246,0.15)}}
+  .fret-stats{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:16px}}
+  .fret-stat{{background:rgba(15,23,42,0.6);border:1px solid rgba(51,65,85,0.5);border-radius:10px;padding:14px;text-align:center}}
+  .fret-stat .label{{font-size:11px;color:#94a3b8;margin-bottom:4px}}
+  .fret-stat .value{{font-size:20px;font-weight:700;color:#f8fafc}}
+  .fret-stat .sub{{font-size:11px;color:#64748b;margin-top:2px}}
 
   .kpi-row{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}}
   .kpi{{background:linear-gradient(145deg,rgba(30,41,59,0.95),rgba(30,41,59,0.6));border-radius:14px;padding:20px;border:1px solid rgba(51,65,85,0.5);transition:all .3s ease;position:relative;overflow:hidden}}
@@ -279,6 +300,10 @@ html = f"""<!DOCTYPE html>
       <div class="card"><h3 id="hDN">일별 신규</h3><div id="d-new" class="plot"></div></div>
     </div>
     <div class="card" id="extraDailyCard"><h3 id="hDE"></h3><div id="d-extra" class="plot"></div></div>
+    <div class="row2 hidden" id="instRevisitRow">
+      <div class="card"><h3>일별 재방문율 (전일 활성 대비 %)</h3><div id="d-revisit-d1" class="plot"></div></div>
+      <div class="card"><h3>7일 재방문율 (7일 전 활성 대비 %)</h3><div id="d-revisit-d7" class="plot"></div></div>
+    </div>
   </div>
 
   <div id="tab-weekly" class="chart-section hidden">
@@ -329,16 +354,36 @@ html = f"""<!DOCTYPE html>
       <div class="card"><h3>Stickiness Ratio (WAU/MAU, WPU/MPU)</h3><div id="u-sticky" class="plot"></div></div>
       <div class="card"><h3>Y/N 플래그 일별 Y 수</h3><div id="u-yn" class="plot"></div></div>
     </div>
+    <div class="row2">
+      <div class="card"><h3>일별 재방문율 (전일 활성 대비 %)</h3><div id="u-revisit-d1" class="plot"></div></div>
+      <div class="card"><h3>7일 재방문율 (7일 전 활성 대비 %)</h3><div id="u-revisit-d7" class="plot"></div></div>
+    </div>
   </div>
 
   <div id="tab-retention" class="chart-section hidden">
-    <div class="row2">
-      <div class="card"><h3>D7 리텐션율 (가입 후 7일 내 활동 비율)</h3><div id="r-d7" class="plot"></div></div>
-      <div class="card"><h3>D28 리텐션율 (가입 후 28일 내 활동 비율)</h3><div id="r-d28" class="plot"></div></div>
+    <div id="retStudentOnly">
+      <div class="row2">
+        <div class="card"><h3>D7 리텐션율 (7일 전 활성 사용자의 재활동 비율)</h3><div id="r-d7" class="plot"></div></div>
+        <div class="card"><h3>D28 리텐션율 (28일 전 활성 사용자의 재활동 비율)</h3><div id="r-d28" class="plot"></div></div>
+      </div>
+      <div class="row2">
+        <div class="card"><h3>D7 코호트 크기 (7일 전 활성 학생 수)</h3><div id="r-d7n" class="plot"></div></div>
+        <div class="card"><h3>D28 코호트 크기 (28일 전 활성 학생 수)</h3><div id="r-d28n" class="plot"></div></div>
+      </div>
     </div>
-    <div class="row2">
-      <div class="card"><h3>D7 코호트 크기 (7일 전 가입 학생 수)</h3><div id="r-d7n" class="plot"></div></div>
-      <div class="card"><h3>D28 코호트 크기 (28일 전 가입 학생 수)</h3><div id="r-d28n" class="plot"></div></div>
+    <div id="featRetSection">
+      <div class="card">
+        <h3 id="hFRetTitle">기능별 D7 리텐션</h3>
+        <div class="feat-filter" id="featRetFilter"></div>
+        <div id="featRetSummary"></div>
+        <div id="featRetDetail" class="hidden">
+          <div class="row2">
+            <div class="card"><h3 id="hFRetSame">동일기능 리텐션</h3><div id="r-feat-same" class="plot"></div></div>
+            <div class="card"><h3 id="hFRetSvc">서비스 리텐션</h3><div id="r-feat-svc" class="plot"></div></div>
+          </div>
+          <div class="fret-stats" id="featRetStats"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -387,8 +432,11 @@ const S_CNAMES={json.dumps({
     'cat_1년 이용권':'1년 이용권',
 }, ensure_ascii=False)};
 
+const S_FRET={student_fret_json};
+
 const I_RAW={inst_json};
 const I_FEAT={inst_feat_json};
+const I_FRET={inst_fret_json};
 const I_FNAMES={json.dumps({
     '발급권사용량(학생)':'발급권(학생)','열람권사용량(학생)':'열람권(학생)',
     '발급권사용량(스토리지)':'발급권(스토리지)','열람권사용량(스토리지)':'열람권(스토리지)',
@@ -399,6 +447,7 @@ const I_FNAMES={json.dumps({
 
 let MODE='student'; // 'student' | 'inst'
 let REG_FILTER='all'; // 'all' | 'reg' | 'unreg'
+let FRET_SELECTED=null; // null=전체요약, string=기능키
 
 const SCOL=['#60a5fa','#4ade80','#f59e0b','#e879f9','#818cf8'];
 const ICOL=['#a78bfa','#60a5fa','#4ade80','#f59e0b','#f472b6','#818cf8','#fb923c','#22d3ee','#e879f9','#facc15','#34d399','#f87171','#38bdf8'];
@@ -424,6 +473,8 @@ function raw(){{
       r.n_academies=d[p+'n_academies']??d.n_academies;
       r.active_academies=d[p+'active_academies']??d.active_academies;
     }}
+    r.revisit_d1_rate=d[p+'revisit_d1_rate']??d.revisit_d1_rate;
+    r.revisit_d7_rate=d[p+'revisit_d7_rate']??d.revisit_d7_rate;
     featCols().forEach(k=>{{if(d[p+k]!==undefined)r[k]=d[p+k]}});
     return r;
   }});
@@ -457,6 +508,7 @@ function setRegFilter(f,btn){{
 function switchMode(m){{
   MODE=m;
   REG_FILTER='all';
+  FRET_SELECTED=null;
   document.querySelectorAll('.reg-btn').forEach((b,i)=>{{b.classList.toggle('active',i===0)}});
   document.getElementById('modeStudent').className='mode-btn'+(m==='student'?' active-student':'');
   document.getElementById('modeInst').className='mode-btn'+(m==='inst'?' active-inst':'');
@@ -475,7 +527,7 @@ function buildTabs(){{
     ['daily','일별'],['weekly','주별'],['monthly','월별'],['features','기능별 사용현황'],
   ];
   if(MODE==='student'){{tabs.push(['users','사용자 지표']);tabs.push(['retention','리텐션']);tabs.push(['extra','학년/이용권']);}}
-  else tabs.push(['extra','부가지표']);
+  else{{tabs.push(['retention','리텐션']);tabs.push(['extra','부가지표']);}}
   tabs.push(['table','데이터 테이블']);
   const bar=document.getElementById('tabBar');
   bar.innerHTML=tabs.map(([id,label],i)=>
@@ -566,14 +618,14 @@ function renderAll(){{
   // DAILY
   Plotly.react('d-active',[
     {{x:dates,y:actV,customdata:cd,name:`활성 ${{e}}`,type:'bar',marker:{{color:barColor}},hovertemplate:ht_active}},
-    {{x:dates,y:ma(actV),name:'7일 이동평균',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:2.5}},hovertemplate:ht_ma}},
+    {{x:dates,y:ma(actV),name:'7일 이동평균',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:1.5}},hovertemplate:ht_ma}},
   ],{{...hoverL}},CFG);
   Plotly.react('d-rate',[
     {{x:dates,y:actR,customdata:cd,name:'활성화율',type:'bar',marker:{{color:'rgba(74,222,128,0.5)'}},hovertemplate:ht_rate}},
-    {{x:dates,y:ma(actR),name:'7일 이동평균',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:2.5}},hovertemplate:ht_ma}},
+    {{x:dates,y:ma(actR),name:'7일 이동평균',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:1.5}},hovertemplate:ht_ma}},
   ],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
   Plotly.react('d-total',[
-    {{x:dates,y:totV,customdata:cd,name:`총 ${{e}}`,type:'scatter',mode:'lines',line:{{color:ac,width:2}},fill:'tozeroy',fillcolor:barColor.replace('0.6','0.1'),hovertemplate:ht_total}},
+    {{x:dates,y:totV,customdata:cd,name:`총 ${{e}}`,type:'scatter',mode:'lines',line:{{color:ac,width:1}},fill:'tozeroy',fillcolor:barColor.replace('0.6','0.1'),hovertemplate:ht_total}},
   ],{{...hoverL}},CFG);
   Plotly.react('d-new',[
     {{x:dates,y:newV,customdata:cd,name:`신규 ${{e}}`,type:'bar',marker:{{color:'#818cf8'}},hovertemplate:ht_new}},
@@ -585,11 +637,11 @@ function renderAll(){{
   if(MODE==='student'){{
     eCard.classList.remove('hidden');
     document.getElementById('hDE').textContent='일별 학원 수';
-    Plotly.react('d-extra',[{{x:dates,y:F.map(d=>d.n_academies||0),customdata:cd,name:'학원 수',type:'scatter',mode:'lines',line:{{color:'#f472b6',width:2}},fill:'tozeroy',fillcolor:'rgba(244,114,182,0.08)',hovertemplate:ht_extra}}],{{...hoverL}},CFG);
+    Plotly.react('d-extra',[{{x:dates,y:F.map(d=>d.n_academies||0),customdata:cd,name:'학원 수',type:'scatter',mode:'lines',line:{{color:'#f472b6',width:1}},fill:'tozeroy',fillcolor:'rgba(244,114,182,0.08)',hovertemplate:ht_extra}}],{{...hoverL}},CFG);
   }}else{{
     eCard.classList.remove('hidden');
     document.getElementById('hDE').textContent='등록 학생 수 추이';
-    Plotly.react('d-extra',[{{x:dates,y:F.map(d=>d.total_registered_students||0),customdata:cd,name:'등록 학생',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:2}},fill:'tozeroy',fillcolor:'rgba(96,165,250,0.1)',hovertemplate:ht_extra}}],{{...hoverL}},CFG);
+    Plotly.react('d-extra',[{{x:dates,y:F.map(d=>d.total_registered_students||0),customdata:cd,name:'등록 학생',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:1}},fill:'tozeroy',fillcolor:'rgba(96,165,250,0.1)',hovertemplate:ht_extra}}],{{...hoverL}},CFG);
   }}
 
   // WEEKLY
@@ -605,7 +657,7 @@ function renderAll(){{
   const wHt=`<b>%{{x}}</b> (%{{customdata[5]}}일)<br>평균 총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br><b>평균 활성: %{{y}}${{unit}}</b><br>평균 활성화율: %{{customdata[2]}}%<br>최대 활성: %{{customdata[4]:,}}${{unit}}<br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<extra></extra>`;
 
   Plotly.react('w-active',[{{x:wLb,y:wA,customdata:wCd,name:'평균 활성',type:'bar',marker:{{color:ac}},hovertemplate:wHt}}],{{...hoverL,xaxis:{{...L.xaxis,tickangle:-45}}}},CFG);
-  Plotly.react('w-rate',[{{x:wLb,y:wR,customdata:wCd,name:'평균 활성화율',type:'scatter',mode:'lines+markers',line:{{color:'#4ade80',width:2}},marker:{{size:4}},hovertemplate:`<b>%{{x}}</b> (%{{customdata[5]}}일)<br>평균 총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br>평균 활성: %{{customdata[1]}}${{unit}}<br><b>평균 활성화율: %{{y}}%</b><br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<extra></extra>`}}],{{...hoverL,xaxis:{{...L.xaxis,tickangle:-45}},yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
+  Plotly.react('w-rate',[{{x:wLb,y:wR,customdata:wCd,name:'평균 활성화율',type:'scatter',mode:'lines+markers',line:{{color:'#4ade80',width:1}},marker:{{size:4}},hovertemplate:`<b>%{{x}}</b> (%{{customdata[5]}}일)<br>평균 총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br>평균 활성: %{{customdata[1]}}${{unit}}<br><b>평균 활성화율: %{{y}}%</b><br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<extra></extra>`}}],{{...hoverL,xaxis:{{...L.xaxis,tickangle:-45}},yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
   Plotly.react('w-max',[{{x:wLb,y:wM,customdata:wCd,name:'최대 활성',type:'bar',marker:{{color:'#f59e0b'}},hovertemplate:`<b>%{{x}}</b> (%{{customdata[5]}}일)<br>평균 총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br><b>최대 활성: %{{y:,}}${{unit}}</b><br>평균 활성: %{{customdata[1]}}${{unit}}<extra></extra>`}}],{{...hoverL,xaxis:{{...L.xaxis,tickangle:-45}}}},CFG);
   Plotly.react('w-new',[{{x:wLb,y:wN,customdata:wCd,name:`신규 ${{e}}`,type:'bar',marker:{{color:'#818cf8'}},hovertemplate:`<b>%{{x}}</b> (%{{customdata[5]}}일)<br>평균 총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br><b>신규 ${{e}}: %{{y:,}}${{unit}}</b><extra></extra>`}}],{{...hoverL,xaxis:{{...L.xaxis,tickangle:-45}}}},CFG);
 
@@ -621,14 +673,14 @@ function renderAll(){{
   const mHt=`<b>%{{x}}</b> (%{{customdata[5]}}일)<br>평균 총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br><b>평균 활성: %{{y}}${{unit}}</b><br>평균 활성화율: %{{customdata[2]}}%<br>최대 활성: %{{customdata[4]:,}}${{unit}}<br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<extra></extra>`;
 
   Plotly.react('m-active',[{{x:mK,y:mA,customdata:mCd,name:'평균 활성',type:'bar',marker:{{color:ac}},text:mA.map(v=>v.toFixed(1)),textposition:'outside',textfont:{{color:'#94a3b8',size:11}},hovertemplate:mHt}}],{{...hoverL}},CFG);
-  Plotly.react('m-rate',[{{x:mK,y:mR,customdata:mCd,name:'평균 활성화율',type:'scatter',mode:'lines+markers',line:{{color:'#4ade80',width:3}},marker:{{size:7}},hovertemplate:`<b>%{{x}}</b> (%{{customdata[5]}}일)<br>평균 총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br>평균 활성: %{{customdata[1]}}${{unit}}<br><b>평균 활성화율: %{{y}}%</b><br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<extra></extra>`}}],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
+  Plotly.react('m-rate',[{{x:mK,y:mR,customdata:mCd,name:'평균 활성화율',type:'scatter',mode:'lines+markers',line:{{color:'#4ade80',width:1}},marker:{{size:7}},hovertemplate:`<b>%{{x}}</b> (%{{customdata[5]}}일)<br>평균 총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br>평균 활성: %{{customdata[1]}}${{unit}}<br><b>평균 활성화율: %{{y}}%</b><br>신규 ${{e}}: %{{customdata[3]:,}}${{unit}}<extra></extra>`}}],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
   Plotly.react('m-max',[{{x:mK,y:mM,customdata:mCd,name:'최대 활성',type:'bar',marker:{{color:'#f59e0b'}},text:mM,textposition:'outside',textfont:{{color:'#94a3b8',size:11}},hovertemplate:`<b>%{{x}}</b> (%{{customdata[5]}}일)<br><b>최대 활성: %{{y:,}}${{unit}}</b><br>평균 활성: %{{customdata[1]}}${{unit}}<br>평균 활성화율: %{{customdata[2]}}%<extra></extra>`}}],{{...hoverL}},CFG);
   Plotly.react('m-new',[{{x:mK,y:mN,customdata:mCd,name:`신규 ${{e}}`,type:'bar',marker:{{color:'#818cf8'}},text:mN,textposition:'outside',textfont:{{color:'#94a3b8',size:11}},hovertemplate:`<b>%{{x}}</b> (%{{customdata[5]}}일)<br>평균 총 ${{e}}: %{{customdata[0]:,}}${{unit}}<br><b>신규 ${{e}}: %{{y:,}}${{unit}}</b><extra></extra>`}}],{{...hoverL}},CFG);
   Plotly.react('m-total',[{{x:mK,y:mT,customdata:mCd,name:`평균 총 ${{e}}`,type:'bar',marker:{{color:ac}},text:mT.map(v=>v.toLocaleString()),textposition:'outside',textfont:{{color:'#94a3b8',size:11}},hovertemplate:`<b>%{{x}}</b> (%{{customdata[5]}}일)<br><b>평균 총 ${{e}}: %{{y:,}}${{unit}}</b><br>평균 활성: %{{customdata[1]}}${{unit}}<br>활성화율: %{{customdata[2]}}%<extra></extra>`}}],{{...hoverL}},CFG);
 
   // FEATURES
   const fc=featCols(),fn=featNames(),fcl=fColors();
-  const fT=fc.map((k,i)=>({{x:dates,y:F.map(d=>d[k]||0),customdata:cd,name:fn[k]||k,type:'scatter',mode:'lines',line:{{color:fcl[i%fcl.length],width:2}},hovertemplate:`<b>%{{x}}</b><br>${{fn[k]||k}}: <b>%{{y:,}}${{unit}}</b><br>총 ${{e}}: %{{customdata[0]:,}}<br>전체 활성: %{{customdata[1]:,}}<extra></extra>`}}));
+  const fT=fc.map((k,i)=>({{x:dates,y:F.map(d=>d[k]||0),customdata:cd,name:fn[k]||k,type:'scatter',mode:'lines',line:{{color:fcl[i%fcl.length],width:1}},hovertemplate:`<b>%{{x}}</b><br>${{fn[k]||k}}: <b>%{{y:,}}${{unit}}</b><br>총 ${{e}}: %{{customdata[0]:,}}<br>전체 활성: %{{customdata[1]:,}}<extra></extra>`}}));
   Plotly.react('f-trend',fT,{{...L,margin:{{...L.margin,b:60}}}},CFG);
   const fAvg=fc.map(k=>{{const v=F.map(d=>d[k]||0);return +(v.reduce((a,b)=>a+b,0)/v.length).toFixed(1)}});
   const fLb=fc.map(k=>fn[k]||k);
@@ -651,10 +703,10 @@ function renderAll(){{
   }}else{{
     document.getElementById('hE1').textContent='등록 학생 수 추이';
     document.getElementById('hE2').textContent='스토리지 사용 / 등록권 구매 학원';
-    Plotly.react('e1',[{{x:dates,y:F.map(d=>d.total_registered_students||0),name:'등록 학생',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:2}},fill:'tozeroy',fillcolor:'rgba(96,165,250,0.1)'}}],{{...L}},CFG);
+    Plotly.react('e1',[{{x:dates,y:F.map(d=>d.total_registered_students||0),name:'등록 학생',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:1}},fill:'tozeroy',fillcolor:'rgba(96,165,250,0.1)'}}],{{...L}},CFG);
     Plotly.react('e2',[
-      {{x:dates,y:F.map(d=>d.storage_users||0),name:'스토리지 사용',type:'scatter',mode:'lines',line:{{color:'#4ade80',width:2}}}},
-      {{x:dates,y:F.map(d=>d.purchase_users||0),name:'등록권 구매',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:2}}}},
+      {{x:dates,y:F.map(d=>d.storage_users||0),name:'스토리지 사용',type:'scatter',mode:'lines',line:{{color:'#4ade80',width:1}}}},
+      {{x:dates,y:F.map(d=>d.purchase_users||0),name:'등록권 구매',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:1}}}},
     ],{{...L}},CFG);
   }}
 
@@ -666,56 +718,196 @@ function renderAll(){{
     Plotly.react('u-aupu',[
       {{x:dates,y:auV,name:'AU (Active User)',type:'bar',marker:{{color:'rgba(96,165,250,0.6)'}},hovertemplate:'<b>%{{x}}</b><br>AU: <b>%{{y}}명</b><extra></extra>'}},
       {{x:dates,y:puV,name:'PU (Premium User)',type:'bar',marker:{{color:'rgba(74,222,128,0.6)'}},hovertemplate:'<b>%{{x}}</b><br>PU: <b>%{{y}}명</b><extra></extra>'}},
-      {{x:dates,y:ma(auV),name:'AU 7일 이동평균',type:'scatter',mode:'lines',line:{{color:'#3b82f6',width:2.5}},hovertemplate:'<b>AU 7일 평균: %{{y}}</b><extra></extra>'}},
+      {{x:dates,y:ma(auV),name:'AU 7일 이동평균',type:'scatter',mode:'lines',line:{{color:'#3b82f6',width:1.5}},hovertemplate:'<b>AU 7일 평균: %{{y}}</b><extra></extra>'}},
     ],{{...hoverL,barmode:'overlay'}},CFG);
     // AU Rate vs PU Rate
     Plotly.react('u-rates',[
-      {{x:dates,y:auR,name:'AU Rate',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:2}},hovertemplate:'<b>%{{x}}</b><br>AU Rate: <b>%{{y:.2f}}%</b><extra></extra>'}},
-      {{x:dates,y:puR,name:'PU Rate',type:'scatter',mode:'lines',line:{{color:'#4ade80',width:2}},hovertemplate:'<b>%{{x}}</b><br>PU Rate: <b>%{{y:.2f}}%</b><extra></extra>'}},
-      {{x:dates,y:ma(auR),name:'AU Rate 7일 평균',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:2,dash:'dot'}},hovertemplate:'<b>AU Rate 7일 평균: %{{y:.2f}}%</b><extra></extra>'}},
+      {{x:dates,y:auR,name:'AU Rate',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:1}},hovertemplate:'<b>%{{x}}</b><br>AU Rate: <b>%{{y:.2f}}%</b><extra></extra>'}},
+      {{x:dates,y:puR,name:'PU Rate',type:'scatter',mode:'lines',line:{{color:'#4ade80',width:1}},hovertemplate:'<b>%{{x}}</b><br>PU Rate: <b>%{{y:.2f}}%</b><extra></extra>'}},
+      {{x:dates,y:ma(auR),name:'AU Rate 7일 평균',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:1,dash:'dot'}},hovertemplate:'<b>AU Rate 7일 평균: %{{y:.2f}}%</b><extra></extra>'}},
     ],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
     // Rolling WAU/MAU
     Plotly.react('u-waumau',[
-      {{x:dates,y:F.map(d=>d.rolling_wau||0),name:'WAU (7일)',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>WAU: <b>%{{y}}명</b><extra></extra>'}},
-      {{x:dates,y:F.map(d=>d.rolling_mau||0),name:'MAU (28일)',type:'scatter',mode:'lines',line:{{color:'#a78bfa',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>MAU: <b>%{{y}}명</b><extra></extra>'}},
+      {{x:dates,y:F.map(d=>d.rolling_wau||0),name:'WAU (7일)',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:1.5}},hovertemplate:'<b>%{{x}}</b><br>WAU: <b>%{{y}}명</b><extra></extra>'}},
+      {{x:dates,y:F.map(d=>d.rolling_mau||0),name:'MAU (28일)',type:'scatter',mode:'lines',line:{{color:'#a78bfa',width:1.5}},hovertemplate:'<b>%{{x}}</b><br>MAU: <b>%{{y}}명</b><extra></extra>'}},
     ],{{...hoverL}},CFG);
     // Rolling WPU/MPU
     Plotly.react('u-wpumpu',[
-      {{x:dates,y:F.map(d=>d.rolling_wpu||0),name:'WPU (7일)',type:'scatter',mode:'lines',line:{{color:'#4ade80',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>WPU: <b>%{{y}}명</b><extra></extra>'}},
-      {{x:dates,y:F.map(d=>d.rolling_mpu||0),name:'MPU (28일)',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>MPU: <b>%{{y}}명</b><extra></extra>'}},
+      {{x:dates,y:F.map(d=>d.rolling_wpu||0),name:'WPU (7일)',type:'scatter',mode:'lines',line:{{color:'#4ade80',width:1.5}},hovertemplate:'<b>%{{x}}</b><br>WPU: <b>%{{y}}명</b><extra></extra>'}},
+      {{x:dates,y:F.map(d=>d.rolling_mpu||0),name:'MPU (28일)',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:1.5}},hovertemplate:'<b>%{{x}}</b><br>MPU: <b>%{{y}}명</b><extra></extra>'}},
     ],{{...hoverL}},CFG);
     // Stickiness
     Plotly.react('u-sticky',[
-      {{x:dates,y:F.map(d=>(d.wau_mau_ratio||0)*100),name:'WAU/MAU',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>WAU/MAU: <b>%{{y:.1f}}%</b><extra></extra>'}},
-      {{x:dates,y:F.map(d=>(d.wpu_mpu_ratio||0)*100),name:'WPU/MPU',type:'scatter',mode:'lines',line:{{color:'#4ade80',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>WPU/MPU: <b>%{{y:.1f}}%</b><extra></extra>'}},
+      {{x:dates,y:F.map(d=>(d.wau_mau_ratio||0)*100),name:'WAU/MAU',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:1.5}},hovertemplate:'<b>%{{x}}</b><br>WAU/MAU: <b>%{{y:.1f}}%</b><extra></extra>'}},
+      {{x:dates,y:F.map(d=>(d.wpu_mpu_ratio||0)*100),name:'WPU/MPU',type:'scatter',mode:'lines',line:{{color:'#4ade80',width:1.5}},hovertemplate:'<b>%{{x}}</b><br>WPU/MPU: <b>%{{y:.1f}}%</b><extra></extra>'}},
     ],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
     // Y/N flags
     const ynColors=['#f472b6','#38bdf8','#818cf8','#fb923c','#34d399'];
-    const ynTraces=S_YN_KEYS.map((k,i)=>({{x:dates,y:F.map(d=>d[k]||0),name:S_YN_NAMES[k],type:'scatter',mode:'lines',line:{{color:ynColors[i],width:2}},hovertemplate:`<b>%{{x}}</b><br>${{S_YN_NAMES[k]}}: <b>%{{y}}명</b><extra></extra>`}}));
+    const ynTraces=S_YN_KEYS.map((k,i)=>({{x:dates,y:F.map(d=>d[k]||0),name:S_YN_NAMES[k],type:'scatter',mode:'lines',line:{{color:ynColors[i],width:1}},hovertemplate:`<b>%{{x}}</b><br>${{S_YN_NAMES[k]}}: <b>%{{y}}명</b><extra></extra>`}}));
     Plotly.react('u-yn',ynTraces,{{...hoverL}},CFG);
+
+    // REVISIT RATE (student)
+    const rv1=F.map(d=>d.revisit_d1_rate||0),rv7=F.map(d=>d.revisit_d7_rate||0);
+    Plotly.react('u-revisit-d1',[
+      {{x:dates,y:rv1,name:'일별 재방문율',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:1}},hovertemplate:'<b>%{{x}}</b><br>일별 재방문율: <b>%{{y:.1f}}%</b><extra></extra>'}},
+      {{x:dates,y:ma(rv1),name:'7일 이동평균',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:1.5,dash:'dot'}},hovertemplate:'<b>7일 평균: %{{y:.1f}}%</b><extra></extra>'}},
+    ],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
+    Plotly.react('u-revisit-d7',[
+      {{x:dates,y:rv7,name:'7일 재방문율',type:'scatter',mode:'lines',line:{{color:'#a78bfa',width:1}},hovertemplate:'<b>%{{x}}</b><br>7일 재방문율: <b>%{{y:.1f}}%</b><extra></extra>'}},
+      {{x:dates,y:ma(rv7),name:'7일 이동평균',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:1.5,dash:'dot'}},hovertemplate:'<b>7일 평균: %{{y:.1f}}%</b><extra></extra>'}},
+    ],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
 
     // RETENTION TAB
     // D7 retention
     Plotly.react('r-d7',[
-      {{x:dates,y:F.map(d=>d.d7_au_rate||0),name:'D7 AU 리텐션',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>D7 AU: <b>%{{y:.1f}}%</b><br>코호트: %{{customdata}}명<extra></extra>',customdata:F.map(d=>d.d7_au_total||0)}},
-      {{x:dates,y:F.map(d=>d.d7_pu_rate||0),name:'D7 PU 리텐션',type:'scatter',mode:'lines',line:{{color:'#4ade80',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>D7 PU: <b>%{{y:.1f}}%</b><extra></extra>'}},
+      {{x:dates,y:F.map(d=>d.d7_au_rate||0),name:'D7 AU 리텐션',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:1.5}},hovertemplate:'<b>%{{x}}</b><br>D7 AU: <b>%{{y:.1f}}%</b><br>코호트: %{{customdata}}명<extra></extra>',customdata:F.map(d=>d.d7_au_total||0)}},
+      {{x:dates,y:F.map(d=>d.d7_pu_rate||0),name:'D7 PU 리텐션',type:'scatter',mode:'lines',line:{{color:'#4ade80',width:1.5}},hovertemplate:'<b>%{{x}}</b><br>D7 PU: <b>%{{y:.1f}}%</b><extra></extra>'}},
     ],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%',range:[0,105]}}}},CFG);
     // D28 retention
     Plotly.react('r-d28',[
-      {{x:dates,y:F.map(d=>d.d28_au_rate||0),name:'D28 AU 리텐션',type:'scatter',mode:'lines',line:{{color:'#a78bfa',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>D28 AU: <b>%{{y:.1f}}%</b><br>코호트: %{{customdata}}명<extra></extra>',customdata:F.map(d=>d.d28_au_total||0)}},
-      {{x:dates,y:F.map(d=>d.d28_pu_rate||0),name:'D28 PU 리텐션',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:2.5}},hovertemplate:'<b>%{{x}}</b><br>D28 PU: <b>%{{y:.1f}}%</b><extra></extra>'}},
+      {{x:dates,y:F.map(d=>d.d28_au_rate||0),name:'D28 AU 리텐션',type:'scatter',mode:'lines',line:{{color:'#a78bfa',width:1.5}},hovertemplate:'<b>%{{x}}</b><br>D28 AU: <b>%{{y:.1f}}%</b><br>코호트: %{{customdata}}명<extra></extra>',customdata:F.map(d=>d.d28_au_total||0)}},
+      {{x:dates,y:F.map(d=>d.d28_pu_rate||0),name:'D28 PU 리텐션',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:1.5}},hovertemplate:'<b>%{{x}}</b><br>D28 PU: <b>%{{y:.1f}}%</b><extra></extra>'}},
     ],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%',range:[0,105]}}}},CFG);
     // D7 cohort size
     Plotly.react('r-d7n',[
-      {{x:dates,y:F.map(d=>d.d7_au_total||0),name:'D7 코호트',type:'bar',marker:{{color:'rgba(96,165,250,0.5)'}},hovertemplate:'<b>%{{x}}</b><br>7일 전 가입: <b>%{{y}}명</b><extra></extra>'}},
+      {{x:dates,y:F.map(d=>d.d7_au_total||0),name:'D7 코호트',type:'bar',marker:{{color:'rgba(96,165,250,0.5)'}},hovertemplate:'<b>%{{x}}</b><br>7일 전 활성: <b>%{{y}}명</b><extra></extra>'}},
     ],{{...hoverL}},CFG);
     // D28 cohort size
     Plotly.react('r-d28n',[
-      {{x:dates,y:F.map(d=>d.d28_au_total||0),name:'D28 코호트',type:'bar',marker:{{color:'rgba(167,139,250,0.5)'}},hovertemplate:'<b>%{{x}}</b><br>28일 전 가입: <b>%{{y}}명</b><extra></extra>'}},
+      {{x:dates,y:F.map(d=>d.d28_au_total||0),name:'D28 코호트',type:'bar',marker:{{color:'rgba(167,139,250,0.5)'}},hovertemplate:'<b>%{{x}}</b><br>28일 전 활성: <b>%{{y}}명</b><extra></extra>'}},
     ],{{...hoverL}},CFG);
   }}
 
+  // FEATURE RETENTION (both modes)
+  document.getElementById('retStudentOnly').classList.toggle('hidden',MODE!=='student');
+  renderFeatRetention();
+
+  // REVISIT RATE (institution, shown in daily tab)
+  const irrEl=document.getElementById('instRevisitRow');
+  if(MODE==='inst'){{
+    irrEl.classList.remove('hidden');
+    const irv1=F.map(d=>d.revisit_d1_rate||0),irv7=F.map(d=>d.revisit_d7_rate||0);
+    Plotly.react('d-revisit-d1',[
+      {{x:dates,y:irv1,name:'일별 재방문율',type:'scatter',mode:'lines',line:{{color:'#a78bfa',width:1}},hovertemplate:'<b>%{{x}}</b><br>일별 재방문율: <b>%{{y:.1f}}%</b><extra></extra>'}},
+      {{x:dates,y:ma(irv1),name:'7일 이동평균',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:1.5,dash:'dot'}},hovertemplate:'<b>7일 평균: %{{y:.1f}}%</b><extra></extra>'}},
+    ],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
+    Plotly.react('d-revisit-d7',[
+      {{x:dates,y:irv7,name:'7일 재방문율',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:1}},hovertemplate:'<b>%{{x}}</b><br>7일 재방문율: <b>%{{y:.1f}}%</b><extra></extra>'}},
+      {{x:dates,y:ma(irv7),name:'7일 이동평균',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:1.5,dash:'dot'}},hovertemplate:'<b>7일 평균: %{{y:.1f}}%</b><extra></extra>'}},
+    ],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
+  }}else{{
+    irrEl.classList.add('hidden');
+  }}
+
   renderTable(F);
+}}
+
+// ===== FEATURE RETENTION UI =====
+function selectFeatRet(key){{
+  FRET_SELECTED=key;
+  renderFeatRetention();
+}}
+
+function renderFeatRetention(){{
+  const fret=MODE==='student'?S_FRET:I_FRET;
+  const fretE=entity();
+  const hoverL={{...L,hovermode:'closest'}};
+  document.getElementById('hFRetTitle').textContent=`기능별 D7 리텐션 — ${{fretE}}`;
+
+  if(!fret||!fret.dates)return;
+
+  const fc=featCols(),fn=featNames(),fcl=fColors();
+  const s=document.getElementById('startDate').value,e=document.getElementById('endDate').value;
+  const idx=fret.dates.map((d,i)=>d>=s&&d<=e?i:-1).filter(i=>i>=0);
+  const fd=idx.map(i=>fret.dates[i]);
+  if(!fd.length)return;
+
+  // Build filter buttons
+  const filterEl=document.getElementById('featRetFilter');
+  let btns=`<button class="feat-btn${{FRET_SELECTED===null?' active':''}}" style="${{FRET_SELECTED===null?'background:'+accent()+';border-color:'+accent():''}}" onclick="selectFeatRet(null)">전체 요약</button>`;
+  fc.forEach((k,i)=>{{
+    const isAct=FRET_SELECTED===k;
+    const c=fcl[i%fcl.length];
+    btns+=`<button class="feat-btn${{isAct?' active':''}}" style="${{isAct?'background:'+c+';border-color:'+c:'border-left-color:'+c+';border-left-width:3px'}}" onclick="selectFeatRet('${{k}}')">${{fn[k]||k}}</button>`;
+  }});
+  filterEl.innerHTML=btns;
+
+  const summaryEl=document.getElementById('featRetSummary');
+  const detailEl=document.getElementById('featRetDetail');
+
+  if(FRET_SELECTED===null){{
+    // === SUMMARY MODE ===
+    summaryEl.classList.remove('hidden');
+    detailEl.classList.add('hidden');
+
+    let html='<table class="fret-summary"><thead><tr><th>기능</th><th>동일기능 평균</th><th>서비스 평균</th><th>동일기능 최근</th><th>서비스 최근</th><th>동일기능 최대</th><th>서비스 최대</th></tr></thead><tbody>';
+    fc.forEach((k,i)=>{{
+      const sameV=idx.map(j=>(fret.same[k]||[])[j]||0);
+      const svcV=idx.map(j=>(fret.service[k]||[])[j]||0);
+      const sameAvg=sameV.length?sameV.reduce((a,b)=>a+b,0)/sameV.length:0;
+      const svcAvg=svcV.length?svcV.reduce((a,b)=>a+b,0)/svcV.length:0;
+      const sameLast=sameV.length?sameV[sameV.length-1]:0;
+      const svcLast=svcV.length?svcV[svcV.length-1]:0;
+      const sameMax=sameV.length?Math.max(...sameV):0;
+      const svcMax=svcV.length?Math.max(...svcV):0;
+      const c=fcl[i%fcl.length];
+      html+=`<tr onclick="selectFeatRet('${{k}}')" title="클릭하여 상세 보기"><td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${{c}};margin-right:6px"></span>${{fn[k]||k}}</td><td>${{sameAvg.toFixed(1)}}%</td><td>${{svcAvg.toFixed(1)}}%</td><td>${{sameLast.toFixed(1)}}%</td><td>${{svcLast.toFixed(1)}}%</td><td>${{sameMax.toFixed(1)}}%</td><td>${{svcMax.toFixed(1)}}%</td></tr>`;
+    }});
+    html+='</tbody></table>';
+    summaryEl.innerHTML=html;
+  }}else{{
+    // === DETAIL MODE ===
+    summaryEl.classList.add('hidden');
+    detailEl.classList.remove('hidden');
+    const k=FRET_SELECTED;
+    const name=fn[k]||k;
+    const ki=fc.indexOf(k);
+    const c=fcl[ki%fcl.length];
+
+    const fillC=`rgba(${{parseInt(c.slice(1,3),16)}},${{parseInt(c.slice(3,5),16)}},${{parseInt(c.slice(5,7),16)}},0.08)`;
+
+    // Same-feature retention chart
+    const sameV=idx.map(j=>(fret.same[k]||[])[j]||0);
+    const sameMA=ma(sameV);
+    document.getElementById('hFRetSame').textContent=`${{name}} — 동일기능 D7 리텐션 (%)`;
+    Plotly.react('r-feat-same',[
+      {{x:fd,y:sameV,name:name,type:'scatter',mode:'lines',line:{{color:c,width:1.5}},fill:'tozeroy',fillcolor:fillC,hovertemplate:`<b>%{{x}}</b><br>${{name}}: <b>%{{y:.1f}}%</b><extra></extra>`}},
+      {{x:fd,y:sameMA,name:'7일 이동평균',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:1.5,dash:'dot'}},hovertemplate:'<b>7일 평균: %{{y:.1f}}%</b><extra></extra>'}},
+    ],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%',range:[0,Math.min(105,Math.max(...sameV)*1.2+5)]}}}},CFG);
+
+    // Service retention chart
+    const svcV=idx.map(j=>(fret.service[k]||[])[j]||0);
+    const svcMA=ma(svcV);
+    document.getElementById('hFRetSvc').textContent=`${{name}} — 서비스 D7 리텐션 (%)`;
+    Plotly.react('r-feat-svc',[
+      {{x:fd,y:svcV,name:name,type:'scatter',mode:'lines',line:{{color:c,width:1.5}},fill:'tozeroy',fillcolor:fillC,hovertemplate:`<b>%{{x}}</b><br>${{name}}: <b>%{{y:.1f}}%</b><extra></extra>`}},
+      {{x:fd,y:svcMA,name:'7일 이동평균',type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:1.5,dash:'dot'}},hovertemplate:'<b>7일 평균: %{{y:.1f}}%</b><extra></extra>'}},
+    ],{{...hoverL,yaxis:{{...L.yaxis,ticksuffix:'%',range:[0,Math.min(105,Math.max(...svcV)*1.2+5)]}}}},CFG);
+
+    // Statistics cards
+    const calcStats=(arr)=>{{
+      if(!arr.length)return{{avg:0,ma7:0,last:0,min:0,max:0}};
+      const avg=arr.reduce((a,b)=>a+b,0)/arr.length;
+      const recent=arr.slice(-7);
+      const ma7=recent.reduce((a,b)=>a+b,0)/recent.length;
+      return{{avg,ma7,last:arr[arr.length-1],min:Math.min(...arr),max:Math.max(...arr)}};
+    }};
+    const sameS=calcStats(sameV),svcS=calcStats(svcV);
+    document.getElementById('featRetStats').innerHTML=`
+      <div class="fret-stat"><div class="label">동일기능 평균</div><div class="value">${{sameS.avg.toFixed(1)}}%</div><div class="sub">전체 기간</div></div>
+      <div class="fret-stat"><div class="label">동일기능 7일 평균</div><div class="value">${{sameS.ma7.toFixed(1)}}%</div><div class="sub">최근 7일</div></div>
+      <div class="fret-stat"><div class="label">동일기능 최근값</div><div class="value">${{sameS.last.toFixed(1)}}%</div><div class="sub">${{fd[fd.length-1]}}</div></div>
+      <div class="fret-stat"><div class="label">동일기능 범위</div><div class="value">${{sameS.min.toFixed(1)}}~${{sameS.max.toFixed(1)}}%</div><div class="sub">최소 ~ 최대</div></div>
+      <div class="fret-stat"><div class="label">서비스 평균</div><div class="value">${{svcS.avg.toFixed(1)}}%</div><div class="sub">전체 기간</div></div>
+      <div class="fret-stat"><div class="label">서비스 7일 평균</div><div class="value">${{svcS.ma7.toFixed(1)}}%</div><div class="sub">최근 7일</div></div>
+      <div class="fret-stat"><div class="label">서비스 최근값</div><div class="value">${{svcS.last.toFixed(1)}}%</div><div class="sub">${{fd[fd.length-1]}}</div></div>
+      <div class="fret-stat"><div class="label">서비스 범위</div><div class="value">${{svcS.min.toFixed(1)}}~${{svcS.max.toFixed(1)}}%</div><div class="sub">최소 ~ 최대</div></div>`;
+
+    // Resize charts after unhide
+    setTimeout(()=>{{
+      ['r-feat-same','r-feat-svc'].forEach(id=>{{const el=document.getElementById(id);if(el)Plotly.Plots.resize(el)}});
+    }},100);
+  }}
 }}
 
 // ===== TABLE =====
@@ -729,6 +921,8 @@ function buildTblCols(){{
     {{key:'activation_rate',label:'활성화율(%)',fmt:v=>v.toFixed(2)}},
     {{key:newKey(),label:`신규 ${{e}}`,fmt:v=>(v||0).toLocaleString()}},
   ];
+  cols.push({{key:'revisit_d1_rate',label:'일별재방문(%)',fmt:v=>(v||0).toFixed(1)}});
+  cols.push({{key:'revisit_d7_rate',label:'7일재방문(%)',fmt:v=>(v||0).toFixed(1)}});
   if(MODE==='student'){{
     cols.push({{key:'n_academies',label:'학원 수',fmt:v=>(v||0).toLocaleString()}});
     ['grade_0','grade_1','grade_2','grade_3'].forEach((k,i)=>cols.push({{key:k,label:['예비','고1','고2','고3'][i],fmt:v=>(v||0).toLocaleString()}}));
@@ -898,7 +1092,7 @@ function renderAcadInst(code,data,info,ac){{
   for(const [fi,arr] of Object.entries(ad.f)){{
     const idx=parseInt(fi);
     const name=fn[featCols[idx]]||featCols[idx];
-    traces.push({{x:dates,y:arr,name:name,type:'scatter',mode:'lines',line:{{color:fcl[idx%fcl.length],width:2}}}});
+    traces.push({{x:dates,y:arr,name:name,type:'scatter',mode:'lines',line:{{color:fcl[idx%fcl.length],width:1}}}});
   }}
   if(!traces.length) traces.push({{x:dates,y:dates.map(()=>0),name:'사용량 없음',type:'scatter',mode:'lines'}});
   document.getElementById('hAcadA').textContent='기능별 누적 사용량 추이';
@@ -910,7 +1104,7 @@ function renderAcadInst(code,data,info,ac){{
 
   // Registered students chart
   document.getElementById('hAcadC').textContent='등록 학생 수 추이';
-  Plotly.react('acad-c',[{{x:dates,y:students,type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:2}},fill:'tozeroy',fillcolor:'rgba(96,165,250,0.1)',name:'등록 학생'}}],{{...L}},CFG);
+  Plotly.react('acad-c',[{{x:dates,y:students,type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:1}},fill:'tozeroy',fillcolor:'rgba(96,165,250,0.1)',name:'등록 학생'}}],{{...L}},CFG);
 
   // Daily delta chart
   const deltaTraces=[];
@@ -959,7 +1153,7 @@ function renderAcadStudent(code,data,info,ac){{
   for(const [fi,arr] of Object.entries(ad.f)){{
     const idx=parseInt(fi);
     const name=fn[featCols[idx]]||featCols[idx];
-    traces.push({{x:dates,y:arr,name:name,type:'scatter',mode:'lines',line:{{color:fcl[idx%fcl.length],width:2}}}});
+    traces.push({{x:dates,y:arr,name:name,type:'scatter',mode:'lines',line:{{color:fcl[idx%fcl.length],width:1}}}});
   }}
   if(!traces.length) traces.push({{x:dates,y:dates.map(()=>0),name:'사용량 없음',type:'scatter',mode:'lines'}});
   document.getElementById('hAcadA').textContent='기능별 누적 사용량 추이 (학생 합계)';
@@ -968,14 +1162,14 @@ function renderAcadStudent(code,data,info,ac){{
   // Total vs Active students
   document.getElementById('hAcadB').textContent='총 학생 수 vs 활성 학생 수';
   Plotly.react('acad-active',[
-    {{x:dates,y:total,name:'총 학생',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:2}}}},
+    {{x:dates,y:total,name:'총 학생',type:'scatter',mode:'lines',line:{{color:'#60a5fa',width:1}}}},
     {{x:dates,y:activeArr,name:'활성 학생',type:'bar',marker:{{color:'rgba(74,222,128,0.5)'}}}},
   ],{{...L}},CFG);
 
   // Activation rate
   document.getElementById('hAcadC').textContent='활성화율 추이';
   const rates=total.map((t,i)=>t>0?Math.round(activeArr[i]/t*10000)/100:0);
-  Plotly.react('acad-c',[{{x:dates,y:rates,type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:2}},fill:'tozeroy',fillcolor:'rgba(245,158,11,0.08)',name:'활성화율'}}],{{...L,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
+  Plotly.react('acad-c',[{{x:dates,y:rates,type:'scatter',mode:'lines',line:{{color:'#f59e0b',width:1}},fill:'tozeroy',fillcolor:'rgba(245,158,11,0.08)',name:'활성화율'}}],{{...L,yaxis:{{...L.yaxis,ticksuffix:'%'}}}},CFG);
 
   // Daily delta
   const deltaTraces=[];
